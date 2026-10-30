@@ -1,68 +1,84 @@
 # Mewo Client Fucker
 
-Minecraft screenshare scanner for Windows. Run it from CMD, pick a mode, choose the running game, and read the findings right in the terminal. Nothing gets uploaded.
+A Windows Minecraft screenshare scanner. One CMD command, a purple terminal, and an actual result at the end instead of a wall of random warnings.
 
-The purple console UI takes inspiration from Meow Client Fucker. The scanner code is its own project.
+It checks a running Minecraft process first. If it finds the game folder, it also inspects the mods and relevant files. Nothing gets uploaded.
 
-## Run it
+## Run
 
-Open CMD and paste this:
+Open **Command Prompt** and paste:
 
 ```cmd
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $u='https://raw.githubusercontent.com/Meowsilyy/MewoClientFucker/main/MewoClientFucker.ps1'; $p=Join-Path $env:TEMP 'MewoClientFucker.ps1'; Invoke-WebRequest -Uri $u -OutFile $p; & $p"
 ```
 
-The command downloads the latest script, then runs it. You can inspect [the script](MewoClientFucker.ps1) before you execute it. `-ExecutionPolicy Bypass` is limited to that PowerShell session; don't run code from people you don't trust.
+This downloads and runs the PowerShell script. No separate EXE needs installing. You can read [the script](MewoClientFucker.ps1) before running it. PowerShell's execution-policy override only applies to this session; don't run random scripts you haven't checked.
 
-Choose **Quick**, **Standard**, or **Deep** when Mewo starts. To skip the menu, add `-Mode Deep` (or `Quick` / `Standard`) after `& $p`.
+Pick **Quick**, **Standard** or **Deep** when it opens, then approve the scope of the scan. When more than one Minecraft process is running, select the PID. Mewo won't quietly choose some unrelated launcher folder.
 
-## How the scan works
+If you already know the mode, replace `& $p` with `& $p -Mode Deep`.
 
-Mewo looks for **running Minecraft Java processes first**. If there's more than one, choose the PID you want. You can also specify `-ProcessId 1234` when running the script directly.
+## What it checks
 
-It tries to identify that process's game folder using its launch arguments. If it can't, you choose a matching folder or skip folder checks. It no longer assumes some random launcher profile is the active game.
-
-| Mode | Checks |
+| Mode | Included checks |
 | --- | --- |
-| Quick | Current JVM launch settings, mod JAR hashes and metadata, selected Minecraft folder artifacts |
-| Standard | Quick + loaded DLLs, local mod/config timestamps, macro-capable process names |
-| Deep | Standard + optional sampled JVM-memory signature inspection, with a second consent prompt |
+| Quick | Current Minecraft Java process, JVM launch options, mod JAR names/classes/metadata/hashes, linked instance artifacts |
+| Standard | Quick plus loaded DLLs, selected DLL signatures, mod/config file timestamps, macro-program process names |
+| Deep | Standard plus separate opt-in JVM-memory signature scanning and limited Windows DNS-cache checks for three known client-site domains |
 
-## What it can find
+Mewo reads Java client-related package paths from mod JARs and compares them to its built-in known-client rules. It checks recognizable filenames, mod IDs, and some generic module class names too. Name-only hits are weaker and deliberately shown separately.
 
-- Known public cheat-client names and class package identifiers in installed JARs.
-- Combat, crystal, movement and other module-like class names for review, not as proof of cheating.
-- Fabric, Quilt, Forge and NeoForge mod IDs, versions and hashes.
-- Possible leftover client-named entries in the linked Minecraft `mods` and `config` directories.
-- JVM launch options such as Java agents or additional Fabric mods.
-- Accessible loaded DLLs and selected digital signature checks.
-- Recent timestamps of relevant Minecraft mods and config files.
-- A few known running macro-program process names.
-- Optional bounded samples of the selected JVM's memory in Deep mode.
+Deep mode looks for specific known-client and generic module strings inside **bounded, sampled portions of the selected JVM's memory**. A memory string might only be referenced by other software, so it isn't automatically treated as an active cheat.
 
-A filename or a string match isn't the same as catching a running cheat. Some mods share class names, unsigned DLLs can be legitimate, and a leftover folder doesn't prove recent use.
+The optional DNS check only keeps matching records for `meteorclient.com`, `wurstclient.net` and `liquidbounce.net`. Visiting a website is not evidence of running its client.
 
-## Results
+## Reading the result
 
-The scan summary, findings and check coverage appear in CMD. Afterward, press **M** to browse every mod, **D** for loaded DLLs, or **T** for the file timeline. Press Enter to quit the viewer.
+Mewo displays a result in the CMD window:
 
-A copy is also saved in `Documents\Mewo-Reports` as JSON and TXT, with a SHA-256 checksum. Reports stay local unless the player chooses to share them.
+| Result | Meaning |
+| --- | --- |
+| **CLIENT JAR SIGNATURE FOUND** | A known client package was found inside a scanned mod JAR |
+| **CLIENT STRINGS DETECTED** | A client-related string matched in sampled JVM memory; the source needs review |
+| **POSSIBLE CHEAT INDICATORS** | A name, leftover config, JVM-agent flag, or similar unconfirmed indicator appeared |
+| **NO CHEAT INDICATORS FOUND** | Nothing matched the configured rules in checks that actually ran |
+| **SCAN INCOMPLETE** | Neither the JVM nor mod files could be checked successfully |
+
+Underneath, it shows **cheat mod matches, client memory strings, generic module strings, file traces, agent flags, and scan coverage**.
+
+For hook-related checks, it reports JVM agent flags. Native inline hooks are marked **NOT VERIFIED** because Mewo does not yet compare live executable bytes to a trusted baseline. An unsigned DLL is not proof of hooking.
+
+To browse the full local report in CMD, press **M** for mod JARs, **D** for loaded DLLs, or **T** for the file timeline. Press Enter to exit.
+
+It also writes JSON and a readable text summary under `Documents\Mewo-Reports`, with a separate SHA-256 checksum.
 
 ## What it doesn't do
 
-Mewo doesn't read passwords, Discord messages, browser history, screenshots or keystrokes, and doesn't silently upload data.
+It doesn't scan all RAM, recover deleted files, check every possible cheat, or make a guaranteed guilty/innocent decision. It doesn't secretly read chats, browser history, passwords, screenshots, or keystrokes. It doesn't upload reports. Players choose whether to share their results with staff.
 
-It doesn't currently recover deleted files, verify every inline hook byte, or detect every injection and private client. It won't give a reliable guilty/innocent verdict by itself.
+A client package inside a JAR is meaningful evidence about that file. It does **not**, by itself, prove that someone enabled cheats during a fight. A leftover config or generic class name is weaker evidence.
+
+## Testing
+
+The repository runs Windows GitHub Actions on each push:
+
+- PowerShell 5.1 parser and self-tests
+- PowerShell 7 parser and self-tests
+- Synthetic clean, client-signature, memory-string, leftover-trace and incomplete-scan verdict tests
+- A generated Fabric JAR fixture to check mod metadata, class counting and client-package detection
+- Compilation of the native-memory C# helper
+
+These tests catch parser, classification and basic JAR-handling problems. They don't replace testing on real Minecraft installations with different launchers and mods.
 
 ## Credits
 
 - **Meowsilyy** — Mewo project
-- **Tonynoh** — Meow Client Fucker, the inspiration for the console look and detection approach
-- **YarpLetapStan** — Yarp's Mod Analyzer, inspiration for local mod inspection
-- **OpenAI / ChatGPT** — implementation help
+- **Tonynoh** — Meow Client Fucker, inspiration for the terminal look and detection concepts
+- **YarpLetapStan** — Yarp's Mod Analyzer, inspiration for launcher and mod investigation
+- **OpenAI / ChatGPT** — assistance with implementation and tests
 
-Meow's unpublished executable signatures and private source code have not been copied.
+Mewo uses its own scanner implementation. Meow's unpublished executable, private detection strings and hidden database haven't been extracted or copied.
 
-## Development status
+## Version
 
-v0.5.0 is available in this repository. The code has been inspected, but a complete Windows PowerShell 5.1 test is still needed. If it throws an error, please open an issue with the console error and which scan mode you selected. Don't post reports containing personal information.
+**v0.6.0**. See [GitHub Actions](../../actions) for the latest Windows test results.
