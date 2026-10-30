@@ -750,7 +750,7 @@ function Check-Memory {
         $script:MemoryBytes=[long]$out.Bytes
         foreach ($hit in @($out.Hits)) {
             if ($moduleNeedles -contains $hit) {
-                Add-Finding 'Review' 'MemoryModule' 'Generic PvP module string' ($hit + ' found in sampled JVM memory; not proof of an enabled module.') '' ('PID ' + $script:Target.pid)
+                Add-Finding 'String' 'MemoryModule' $hit ('PID ' + $script:Target.pid + ' [Memory string]; not proof of an enabled module.') '' ('PID ' + $script:Target.pid)
             } else {
                 $id=''
                 foreach ($rule in $script:Rules) {
@@ -769,58 +769,80 @@ function Check-Memory {
 function Verdict {
     $f=@($script:Findings.ToArray())
     $clients=@($f | Where-Object { $_.kind -eq 'Client' })
+    $modules=@($f | Where-Object { $_.kind -eq 'Module' })
     $strings=@($f | Where-Object { $_.kind -eq 'Memory' })
+    $moduleStrings=@($f | Where-Object { $_.kind -eq 'String' })
     $suspicious=@($f | Where-Object { $_.kind -eq 'Review' })
     $notes=@($f | Where-Object { $_.kind -eq 'Info' })
-    $coverage=@($script:Coverage.ToArray())
-    $checked=@($coverage | Where-Object { $_.status -eq 'Completed' })
-    $meaning=''
+    $checked=@($script:Coverage.ToArray() | Where-Object { $_.status -eq 'Completed' })
     if ($clients.Count -gt 0) {
         $label='CHEAT CLIENT SIGNATURE FOUND'
-        $meaning='Known cheat-client package found inside a mod JAR. This shows a client artifact, not that it was enabled in a fight.'
+        $meaning='Recognized client packages were found inside scanned JARs; that does not establish the client was enabled in combat.'
+    } elseif ($modules.Count -gt 0) {
+        $label='CHEAT MODULE FLAGS FOUND'
+        $meaning='Classes named after known cheat modules were found in installed JARs. This identifies classes, not proof that a module ran.'
     } elseif ($strings.Count -gt 0) {
-        $label='CHEAT CLIENT STRINGS FOUND'
-        $meaning='Client-related strings matched sampled JVM memory. Strings can appear without an active cheat.'
-    } elseif ($suspicious.Count -gt 0) {
-        $label='POSSIBLE CHEAT INDICATORS'
-        $meaning='Names, JVM options or other unconfirmed findings require manual review.'
+        $label='CLIENT STRINGS FOUND IN MEMORY'
+        $meaning='Recognized client strings were found in sampled JVM memory. References can also produce matches.'
+    } elseif ($moduleStrings.Count -gt 0 -or $suspicious.Count -gt 0) {
+        $label='SUSPICIOUS STRINGS OR ARTIFACTS'
+        $meaning='Module strings, mod names or other unconfirmed indicators need contextual review.'
     } elseif ($checked.Count -eq 0) {
         $label='SCAN INCOMPLETE'
         $meaning='No scan stage completed successfully.'
     } else {
-        $label='NO CHEAT INDICATORS FOUND'
-        $meaning='No configured signatures matched. That does not mean the player is proven legitimate.'
+        $label='NO DETECTIONS IN COMPLETED CHECKS'
+        $meaning='Configured signatures did not match; this does not prove the machine is clean.'
     }
     return [pscustomobject]@{
         status=$label; meaning=$meaning; clientSignatures=$clients.Count
+        moduleClasses=$modules.Count; moduleStrings=$moduleStrings.Count
         memoryStrings=$strings.Count; reviewFlags=$suspicious.Count; notes=$notes.Count
-        hooks='NOT VERIFIED'; checksCompleted=$checked.Count; coverageCount=$coverage.Count
+        hooks='NOT VERIFIED'; checksCompleted=$checked.Count; coverageCount=$script:Coverage.Count
     }
 }
 
 function Show-Result {
     $v=Verdict
     Heading 'MEWO VERDICT'
-    $color=if ($v.clientSignatures -gt 0) { 'Red' } elseif ($v.memoryStrings -gt 0 -or $v.reviewFlags -gt 0) { 'Yellow' } else { 'Green' }
+    $color=if ($v.clientSignatures -gt 0) { 'Red' } elseif ($v.moduleClasses -gt 0 -or $v.moduleStrings -gt 0 -or $v.memoryStrings -gt 0 -or $v.reviewFlags -gt 0) { 'Yellow' } else { 'Green' }
     Paint ('  ' + ('═' * 60)) $color
     Paint ('  ' + $v.status) $color
     Paint ('  ' + $v.meaning) 'White'
     Paint ('  ' + ('═' * 60)) $color
-    Paint ('  Cheat-client JAR hits : ' + $v.clientSignatures) 'White'
+    Paint ('  Client JAR signatures  : ' + $v.clientSignatures) 'White'
+    Paint ('  Cheat module classes  : ' + $v.moduleClasses) $(if ($v.moduleClasses) { 'Yellow' } else { 'Gray' })
+    Paint ('  Module name strings   : ' + $v.moduleStrings) 'Gray'
     $memoryChecked=@($script:Coverage | Where-Object { $_.check -eq 'memory' -and $_.status -eq 'Completed' }).Count -gt 0
     $memoryText=if ($memoryChecked) { [string]$v.memoryStrings } else { 'NOT SCANNED' }
-    Paint ('  Client memory strings : ' + $memoryText) 'White'
-    Paint ('  Other review findings: ' + $v.reviewFlags) 'White'
+    Paint ('  JVM client strings    : ' + $memoryText) 'White'
+    Paint ('  Other review flags    : ' + $v.reviewFlags) 'Gray'
     Paint '  Native inline hooks   : NOT VERIFIED' 'DarkYellow'
     Paint ('  Minecraft PID         : ' + $(if ($script:Target) { $script:Target.pid } else { 'NONE' })) 'Gray'
     if ($script:Root) { Paint ('  Game folder           : ' + (Hide-Home $script:Root)) 'Gray' }
+    $moduleFindings=@($script:Findings | Where-Object { $_.kind -in @('Module','String') })
+    Heading ('MODULE FLAGS (' + $moduleFindings.Count + ')')
+    if ($moduleFindings.Count -eq 0) {
+        Paint '  No configured module names found in checked class files or sampled memory.' 'Gray'
+    } else {
+        foreach ($category in @('Combat','Crystal','Totem','Movement','Automation','Vision','Bypass','MemoryModule')) {
+            $items=@($moduleFindings | Where-Object { $_.category -eq $category })
+            if ($items.Count -eq 0) { continue }
+            Paint ('  ' + $category.ToUpperInvariant() + '  (' + $items.Count + ')') 'Magenta'
+            foreach ($item in $items) {
+                $source = if ($item.kind -eq 'Module') { 'CLASS' } else { 'STRING' }
+                Paint ('    [' + $source + '] ' + $item.title) $(if ($item.kind -eq 'Module') { 'Yellow' } else { 'DarkYellow' })
+                Paint ('      ' + $item.detail) 'Gray'
+            }
+        }
+    }
     foreach ($kind in @('Client','Memory','Review')) {
         $group=@($script:Findings | Where-Object { $_.kind -eq $kind })
         if ($group.Count -eq 0) { continue }
         Heading ($kind + ' matches')
         foreach ($item in $group) { Paint ('  ' + $item.title + '  |  ' + $item.detail) $(if ($kind -eq 'Client') { 'Red' } else { 'Yellow' }) }
     }
-    Heading 'What was checked'
+    Heading 'Check coverage'
     foreach ($item in $script:Coverage) {
         $c=if ($item.status -eq 'Completed') { 'Green' } else { 'DarkYellow' }
         Paint ('  [' + $item.status + '] ' + $item.check + ' — ' + $item.detail) $c
@@ -857,7 +879,8 @@ function Save-Report {
     $lines.Add('MEWO CLIENT FUCKER  '+$script:Version)
     $lines.Add('VERDICT: '+$verdict.status)
     $lines.Add($verdict.meaning)
-    $lines.Add(('Client JARs: {0} | JVM strings: {1} | Review: {2} | Native hooks: NOT VERIFIED' -f $verdict.clientSignatures,$verdict.memoryStrings,$verdict.reviewFlags))
+    $lines.Add(('Client JARs: {0} | Module classes: {1} | Module strings: {2} | JVM strings: {3} | Review: {4}' -f $verdict.clientSignatures,$verdict.moduleClasses,$verdict.moduleStrings,$verdict.memoryStrings,$verdict.reviewFlags))
+    $lines.Add('Native inline hooks: NOT VERIFIED')
     $lines.Add('Target PID: '+$(if ($script:Target) { $script:Target.pid } else { 'Not selected' }))
     $lines.Add('Instance: '+(Hide-Home $script:Root))
     $lines.Add('')
@@ -916,7 +939,13 @@ function Run-Tests {
     if ((Verdict).status -ne 'CHEAT CLIENT SIGNATURE FOUND') { throw 'Client verdict failed.' }
     $script:Findings.Clear()
     Add-Finding 'Memory' 'MemoryClient' 'Synthetic client string' 'Fixture only' 'meteor' 'PID 1'
-    if ((Verdict).status -ne 'CHEAT CLIENT STRINGS FOUND') { throw 'Memory verdict failed.' }
+    if ((Verdict).status -ne 'CLIENT STRINGS FOUND IN MEMORY') { throw 'Memory verdict failed.' }
+    $script:Findings.Clear()
+    Add-Finding 'Module' 'Combat' 'AimAssist' 'fixture.jar -> classes/AimAssist.class [Class]' '' 'fixture.jar'
+    if ((Verdict).status -ne 'CHEAT MODULE FLAGS FOUND') { throw 'Module class verdict failed.' }
+    $script:Findings.Clear()
+    Add-Finding 'String' 'Crystal' 'AutoCrystal' 'fixture.jar -> classes/Normal.class [Constant]' '' 'fixture.jar'
+    if ((Verdict).status -ne 'SUSPICIOUS STRINGS OR ARTIFACTS') { throw 'Module string verdict failed.' }
     $script:Findings.Clear()
     $fixture=Join-Path ([IO.Path]::GetTempPath()) ('mewo-'+[guid]::NewGuid().ToString('N')+'.jar')
     try {
