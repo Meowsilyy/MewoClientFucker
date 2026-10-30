@@ -96,8 +96,8 @@ function Banner {
   ╚═╝      ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
 '@
     Paint $art 'Magenta'
-    Paint ('  v' + $script:Version + '  |  Meowsilyy  |  Local scanner') 'White'
-    Paint '  Yarp-style mod analysis + independent Meow-style indicators' 'DarkGray'
+    Paint ("  MEWO'S CLIENT FUCKER  |  v" + $script:Version + '  |  Meowsilyy') 'White'
+    Paint '  Mod Analyzer  /  Module Flags  /  Injection Traces' 'DarkGray'
 }
 
 function Hide-Home([string]$Value) {
