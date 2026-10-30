@@ -23,7 +23,7 @@ jobs:
         shell: powershell
         run: |
           & .\MewoClientFucker.ps1 -SelfTest
-          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if (-not $?) { exit 1 }
       - name: Parse in PowerShell 7
         shell: pwsh
         run: |
@@ -38,4 +38,4 @@ jobs:
         shell: pwsh
         run: |
           & .\MewoClientFucker.ps1 -SelfTest
-          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if (-not $?) { exit 1 }
