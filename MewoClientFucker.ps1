@@ -953,12 +953,24 @@ function Run-Tests {
         try {
             $class=$archive.CreateEntry('meteordevelopment/meteorclient/Fixture.class')
             $class.Open().Dispose()
+            $aim=$archive.CreateEntry('test/modules/AimAssist.class')
+            $aim.Open().Dispose()
+            $constantEntry=$archive.CreateEntry('test/modules/OtherModule.class')
+            $constantStream=$constantEntry.Open()
+            try {
+                [byte[]]$header=@(0xCA,0xFE,0xBA,0xBE,0x00,0x00,0x00,0x41,0x00,0x02,0x01,0x00,0x0B)
+                $constantStream.Write($header,0,$header.Length)
+                $payload=[Text.Encoding]::ASCII.GetBytes('AutoCrystal')
+                $constantStream.Write($payload,0,$payload.Length)
+            } finally { $constantStream.Dispose() }
             $writer=[IO.StreamWriter]::new($archive.CreateEntry('fabric.mod.json').Open(),[Text.Encoding]::UTF8)
             try { $writer.Write('{"id":"fixture","name":"Test Mod","version":"1.0"}') } finally { $writer.Dispose() }
         } finally { $archive.Dispose() }
         $parsed=Inspect-Jar $fixture
         if ($parsed.loader -ne 'Fabric' -or $parsed.modId -ne 'fixture') { throw ('Fabric metadata test failed: ' + ($parsed | ConvertTo-Json -Compress -Depth 3)) }
         if (@($parsed.clientPackages) -notcontains 'meteor') { throw 'Client class match test failed.' }
+        if (@($parsed.genericModules | Where-Object { $_.name -eq 'AimAssist' -and $_.source -eq 'Class' }).Count -ne 1) { throw ('AimAssist class match not detected: ' + ($parsed.genericModules | ConvertTo-Json -Compress)) }
+        if (@($parsed.genericModules | Where-Object { $_.name -eq 'AutoCrystal' -and $_.source -eq 'Constant' }).Count -ne 1) { throw ('AutoCrystal constant pool match not detected: ' + ($parsed.genericModules | ConvertTo-Json -Compress)) }
         $testRoot=Join-Path ([IO.Path]::GetTempPath()) ('mewo-instance-'+[guid]::NewGuid().ToString('N'))
         try {
             $modsPath=Join-Path $testRoot 'mods'
@@ -972,6 +984,7 @@ function Run-Tests {
             $script:Timeline.Clear()
             Check-Mods
             if ((Verdict).status -ne 'CHEAT CLIENT SIGNATURE FOUND') { throw 'Full mod scan did not produce a client verdict.' }
+            if ((Verdict).moduleClasses -lt 1 -or (Verdict).moduleStrings -lt 1) { throw 'Full mod scan did not expose module class and constant flags.' }
             Show-Result
             $script:OutputDirectory=Join-Path $testRoot 'reports'
             Save-Report
