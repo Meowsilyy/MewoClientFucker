@@ -8,7 +8,7 @@
 
 $ErrorActionPreference = 'Stop'
 $script:ModeProvided = $PSBoundParameters.ContainsKey('Mode')
-$script:Version = '1.1.0'
+$script:Version = '1.2.0'
 $script:Started = [DateTime]::UtcNow
 $script:Session = [guid]::NewGuid().ToString('N')
 $script:Findings = [Collections.Generic.List[object]]::new()
@@ -18,6 +18,7 @@ $script:DLLs = [Collections.Generic.List[object]]::new()
 $script:Timeline = [Collections.Generic.List[object]]::new()
 $script:Processes = [Collections.Generic.List[object]]::new()
 $script:MemoryBytes = 0L
+$script:ExecutionTraces = [Collections.Generic.List[object]]::new()
 $script:Target = $null
 $script:Root = ''
 $script:Rules = @(
@@ -40,7 +41,8 @@ $script:Rules = @(
     @{ id='huzuni'; name='Huzuni'; package='(?i)(^|/)huzuni/'; names='(?i)huzuni' },
     @{ id='trollhack'; name='TrollHack'; package='(?i)(^|/)trollhack/'; names='(?i)trollhack' },
     @{ id='vape'; name='Vape'; package='(?!)'; names='(?i)(^|[-_. ])vape([-_. ]|$)' },
-    @{ id='backdoored'; name='Backdoored'; package='(?i)(^|/)backdoored/'; names='(?i)backdoored' }
+    @{ id='backdoored'; name='Backdoored'; package='(?i)(^|/)backdoored/'; names='(?i)backdoored' },
+    @{ id='prestige'; name='Prestige Client'; package='(?!)'; names='(?i)(?:^|[-_. ])prestige(?:client)?(?:[-_. ]|$)' }
 )
 $script:Generic = [ordered]@{
     Combat=@('AimAssist','AimLock','KillAura','TriggerBot','SilentAim','BowAimbot','MaceAura','SilentMace','AutoMace','ShieldDisabler','ShieldBreaker','HitBox','Reach','WTap','JumpReset','SprintReset','AutoClicker','AutoPot','AntiWeakness','AutoWeapon')
@@ -552,6 +554,10 @@ function Check-Modules {
             try { $signature=[string](Get-AuthenticodeSignature -LiteralPath $path).Status } catch { $signature='Unavailable' }
         }
         $script:DLLs.Add([pscustomobject]@{ name=[string]$item.ModuleName; path=Hide-Home $path; signature=$signature })
+        $dllHit=Client-Name ([IO.Path]::GetFileNameWithoutExtension($path))
+        if ($dllHit) {
+            Add-Finding 'Injection' 'DLL' ($dllHit.name + ' named DLL loaded') ($item.ModuleName + ' is loaded into the selected JVM; filename-only match, check its origin and signature: ' + $signature) $dllHit.id $item.ModuleName
+        }
         if ($path -match '(?i)\\AppData\\Local\\Temp\\' -and $signature -notin @('Valid','Unavailable')) {
             Add-Finding 'Review' 'DLL' 'Unverified DLL from Temp' ($item.ModuleName + ' loaded into Minecraft; check the origin.')
         }
@@ -589,6 +595,75 @@ function Check-Traces {
     Mark 'traces' 'Completed' 'Scoped to the selected Minecraft mods/config directory, not personal files.'
 }
 
+function Client-Name([string]$Name) {
+    if (-not $Name) { return $null }
+    foreach ($rule in $script:Rules) {
+        if ($Name -match $rule.names) { return $rule }
+    }
+    return $null
+}
+
+function Check-Process-Traces {
+    Heading 'Client and injector process names'
+    if (-not $script:Target) { Mark 'process-traces' 'Skipped' 'No active Minecraft process.'; return }
+    $candidates=@()
+    try { $candidates=@(Get-CimInstance Win32_Process -ErrorAction Stop) } catch {
+        Mark 'process-traces' 'Unavailable' 'Windows process inspection was blocked.'
+        return
+    }
+    $count=0
+    foreach ($proc in $candidates) {
+        $filename=[string]$proc.Name
+        $hit=Client-Name $filename
+        if (-not $hit) { continue }
+        $count++
+        $detail=($hit.name + ' executable name: ' + $filename + ' (PID ' + $proc.ProcessId + '). Name-only detection.')
+        Add-Finding 'Injection' 'Process' 'Client-related process running' $detail $hit.id ('PID ' + $proc.ProcessId)
+    }
+    Paint ('  ' + $count + ' client-name process matches, names only.') 'Magenta'
+    Mark 'process-traces' 'Completed' 'Compared running executable names against client identifiers; unrelated process details are not saved.'
+}
+
+function Check-Execution-Traces {
+    Heading 'Optional execution and cleanup traces'
+    Paint '  Checks only filenames in Windows Prefetch and the root of your temp directory.' 'White'
+    Paint '  An earlier launch or leftover file is not evidence it was used in a fight.' 'Yellow'
+    Paint '  Missing files or incomplete traces cannot prove a self-destruct occurred.' 'Gray'
+    if (-not (Confirm 'Allow this limited execution-trace check?')) {
+        Mark 'execution-traces' 'Skipped' 'Player declined optional Windows artifact check.'
+        return
+    }
+    $locations=@(
+        @{ name='Prefetch'; folder=(Join-Path $env:WINDIR 'Prefetch'); pattern='*.pf' },
+        @{ name='Temp'; folder=([IO.Path]::GetTempPath()); pattern='*' }
+    )
+    $found=0
+    $readable=0
+    foreach ($location in $locations) {
+        if (-not (Test-Path -LiteralPath $location.folder -PathType Container)) { continue }
+        try {
+            $entries=@(Get-ChildItem -LiteralPath $location.folder -File -Filter $location.pattern -ErrorAction Stop | Select-Object -First 2000)
+            $readable++
+        } catch { continue }
+        foreach ($entry in $entries) {
+            $hit=Client-Name $entry.Name
+            if (-not $hit) { continue }
+            $found++
+            $record=[pscustomobject]@{
+                client=$hit.name
+                source=$location.name
+                filename=$entry.Name
+                modifiedUtc=$entry.LastWriteTimeUtc.ToString('o')
+                meaning=if ($location.name -eq 'Prefetch') { 'Possible prior execution artifact' } else { 'Existing temporary filename' }
+            }
+            $script:ExecutionTraces.Add($record)
+            Add-Finding 'Trace' 'Execution' ($hit.name + ' ' + $location.name + ' trace') ($entry.Name + ' at ' + $record.modifiedUtc + '; not proof of self-destruct.') $hit.id $entry.Name
+        }
+    }
+    Paint ('  ' + $found + ' matching trace names in ' + $readable + ' readable locations.') 'Magenta'
+    Mark 'execution-traces' $(if ($readable -gt 0) { 'Completed' } else { 'Unavailable' }) 'Filename metadata only; Windows Prefetch may be disabled or inaccessible, and deleted files may leave no artifacts.'
+}
+
 function Check-MacroTools {
     Heading 'Macro-capable software'
     $known=@('AutoHotkey','AutoHotkey64','AutoHotkey32','AutoIt3','PuloversMacroCreator')
@@ -602,14 +677,15 @@ function Check-MacroTools {
 
 function Check-Dns {
     Heading 'Optional DNS cache traces'
-    if (-not (Confirm 'Look for three known client websites in the Windows DNS cache?')) {
+    if (-not (Confirm 'Look for four known client websites in the Windows DNS cache?')) {
         Mark 'dns' 'Skipped' 'Declined by player.'
         return
     }
     $sites=@(
         @{ name='Meteor Client'; rule='meteor'; domain='meteorclient.com' },
         @{ name='Wurst'; rule='wurst'; domain='wurstclient.net' },
-        @{ name='LiquidBounce'; rule='liquidbounce'; domain='liquidbounce.net' }
+        @{ name='LiquidBounce'; rule='liquidbounce'; domain='liquidbounce.net' },
+        @{ name='Prestige Client'; rule='prestige'; domain='prestigeclient.vip' }
     )
     try {
         $entries=@(Get-DnsClientCache -ErrorAction Stop | Select-Object -ExpandProperty Entry -Unique)
@@ -623,7 +699,7 @@ function Check-Dns {
             }
         }
         Paint ('  Matching client-site DNS records: ' + $count) 'White'
-        Mark 'dns' 'Completed' 'Only three known website domains compared; other records discarded.'
+        Mark 'dns' 'Completed' 'Only four known website domains compared; other records discarded.'
     } catch {
         Mark 'dns' 'Unavailable' 'Windows DNS cache query unavailable.'
     }
@@ -744,7 +820,7 @@ function Check-Memory {
         'net/ccbluex/liquidbounce','net.ccbluex.liquidbounce',
         'net/wurstclient','net.wurstclient','org/bleachhack','org.bleachhack',
         'thunder/hack','rusherhack','dev/fiki/forgehax','xyz/mathax/mathaxclient',
-        'com/lambda/client','me/deftware','keystrokesmod'
+        'com/lambda/client','me/deftware','keystrokesmod','prestigeclient.vip','PrestigeClient'
     )
     $moduleNeedles=@('AimAssist','KillAura','TriggerBot','SilentAim','BowAimbot','MaceAura','ShieldBreaker','AutoCrystal','CrystalAura','CrystalMacro','AutoHitCrystal','AnchorAura','AnchorMacro','DoubleAnchor','AutoDTap','AutoTotem','AutoRetotem','HoverTotem','InventoryMove','NoFall','AutoClicker','AutoMine','ChestStealer','PlayerESP','StorageESP','BaseESP','XRay','Freecam','FakeLag','PingSpoof','GrimBypass')
     try {
@@ -1018,8 +1094,9 @@ function Main {
     Heading 'Consent'
     Paint '  Scans a selected Minecraft JVM and its linked mods/config files.' 'White'
     Paint '  Standard checks loaded DLLs. Deep optionally samples JVM memory' 'White'
-    Paint '  and checks three client website names in local DNS cache.' 'White'
+    Paint '  and checks four client website names in local DNS cache.' 'White'
     Paint '  No unrelated files, browser activity, messages or passwords are collected.' 'White'
+    Paint '  Deep can optionally check limited Prefetch and temp filenames.' 'White'
     Paint '  Findings stay on this computer until you choose to share them.' 'White'
     if (-not (Confirm 'Start this scan?')) { Paint '  Cancelled.' 'Yellow'; return }
     Choose-Target
@@ -1032,9 +1109,11 @@ function Main {
     if ($Mode -in @('Standard','Deep')) {
         Heading 'Phase 4 | Native modules'
         Check-Modules
+        Check-Process-Traces
         Check-MacroTools
     } else {
         Mark 'dlls' 'Skipped' 'Quick mode.'
+        Mark 'process-traces' 'Skipped' 'Quick mode.'
         Mark 'macros' 'Skipped' 'Quick mode.'
     }
     if ($Mode -eq 'Deep') {
@@ -1042,9 +1121,11 @@ function Main {
         Check-Memory
         Heading 'Phase 6 | Client domain traces'
         Check-Dns
+        Check-Execution-Traces
     } else {
         Mark 'memory' 'Skipped' 'Deep mode only.'
         Mark 'dns' 'Skipped' 'Deep mode only.'
+        Mark 'execution-traces' 'Skipped' 'Deep mode only.'
     }
     Show-Result
     Save-Report
