@@ -934,7 +934,7 @@ function Run-Tests {
     $script:Coverage.Clear()
     $script:Findings.Clear()
     Mark 'mods' 'Completed' 'Fixture'
-    if ((Verdict).status -ne 'NO CHEAT INDICATORS FOUND') { throw 'Clean verdict failed.' }
+    if ((Verdict).status -ne 'NO DETECTIONS IN COMPLETED CHECKS') { throw 'Clean verdict failed.' }
     Add-Finding 'Client' 'Mod' 'Synthetic Meteor package' 'Fixture only' 'meteor' 'test.jar'
     if ((Verdict).status -ne 'CHEAT CLIENT SIGNATURE FOUND') { throw 'Client verdict failed.' }
     $script:Findings.Clear()
