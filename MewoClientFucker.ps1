@@ -736,6 +736,36 @@ function Show-Findings([object]$Game, [string]$Root) {
     Say '  Findings need human review. Nothing was uploaded.' 'DarkGray'
 }
 
+function Report-Details {
+    if ($script:Mods.Count -eq 0 -and $script:Modules.Count -eq 0 -and $script:Timeline.Count -eq 0) { return }
+    do {
+        Write-Host ''
+        Say '  [M] Mods   [D] DLLs   [T] Timeline   [Enter] Exit' 'Magenta'
+        $answer = Read-Host '  Show details'
+        switch ($answer.ToLowerInvariant()) {
+            'm' {
+                Section 'Mods checked'
+                foreach ($mod in $script:Mods) {
+                    Say ('  {0}  [{1}] {2}  {3}' -f $mod.file, $mod.loader, $mod.id, $mod.version) 'White'
+                    if ($mod.signatures.Count -gt 0) { Say ('    Client packages: ' + ($mod.signatures -join ', ')) 'Yellow' }
+                }
+            }
+            'd' {
+                Section 'Loaded DLLs'
+                foreach ($module in $script:Modules) {
+                    Say ('  PID {0}  {1}  {2}' -f $module.pid, $module.module, $module.signature) 'Gray'
+                }
+            }
+            't' {
+                Section 'Minecraft file timeline'
+                foreach ($item in $script:Timeline) {
+                    Say ('  {0}  {1}/{2}' -f $item.updatedUtc, $item.location, $item.file) 'Gray'
+                }
+            }
+        }
+    } while ($answer -ne '')
+}
+
 function Main {
     if ($env:OS -ne 'Windows_NT') { throw 'Mewo requires Windows.' }
     try { $Host.UI.RawUI.WindowTitle = 'Mewo Client Fucker | Scanner' } catch {}
@@ -808,6 +838,7 @@ function Main {
     Stage $total $total 'Save report'
     Write-Report $root $correlations
     Show-Findings $game $root
+    Report-Details
     Say ''
     Say '  Mewo finished.' 'Magenta'
 }
