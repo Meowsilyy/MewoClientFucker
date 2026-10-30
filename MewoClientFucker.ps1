@@ -6,6 +6,7 @@
 )
 
 $ErrorActionPreference = 'Stop'
+$script:ModeWasProvided = $PSBoundParameters.ContainsKey('Mode')
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -584,7 +585,7 @@ function Scan-Memory([object[]]$Processes) {
         Covered 'memory' 'Unavailable' ('Cannot initialize native API bindings: ' + $_.Exception.Message)
         return
     }
-    $needles = @('meteordevelopment/meteorclient','net/wurstclient','net/ccbluex/liquidbounce','org/bleachhack','thunder/hack','rusherhack')
+    $needles = @('meteordevelopment/meteorclient','meteordevelopment.meteorclient','net/wurstclient','net.wurstclient','net/ccbluex/liquidbounce','net.ccbluex.liquidbounce','org/bleachhack','org.bleachhack','thunder/hack','rusherhack','dev/fiki/forgehax','dev.fiki.forgehax','xyz/mathax/mathaxclient','xyz.mathax.mathaxclient')
     $checks = 0
     foreach ($p in $Processes) {
         try {
@@ -732,6 +733,18 @@ function Show-Findings([object]$Game, [string]$Root) {
 function Main {
     if ($env:OS -ne 'Windows_NT') { throw 'Mewo requires Windows.' }
     try { $Host.UI.RawUI.WindowTitle = 'Mewo Client Fucker | Scanner' } catch {}
+    if (-not $script:ModeWasProvided) {
+        Say '  MEWO | PICK A SCAN MODE' 'Magenta'
+        Say '  [1] Quick     JVM + mods' 'White'
+        Say '  [2] Standard  DLLs + local timeline' 'White'
+        Say '  [3] Deep      Optional JVM memory signatures' 'White'
+        $choice = Read-Host '  Mode [2]'
+        $Mode = switch ($choice) {
+            '1' { 'Quick' }
+            '3' { 'Deep' }
+            default { 'Standard' }
+        }
+    }
     Banner
     Section 'Consent'
     Say '  Mewo checks the selected Minecraft process and, when linked,' 'White'
@@ -759,7 +772,7 @@ function Main {
     $root = Choose-Instance $game
     if ($root) { Say ('  Folder: ' + (Private-Path $root)) 'White' }
     else { Say '  No instance folder linked. Live process checks will still run.' 'Yellow' }
-    $total = if ($Mode -eq 'Quick') { 4 } elseif ($Mode -eq 'Deep') { 8 } else { 7 }
+    $total = if ($Mode -eq 'Quick') { 5 } elseif ($Mode -eq 'Deep') { 9 } else { 8 }
     Stage 1 $total 'JVM'
     Scan-Jvm $selected
     Stage 2 $total 'Mod JARs'
