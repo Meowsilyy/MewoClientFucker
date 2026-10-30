@@ -20,7 +20,7 @@ For Deep mode, add `-Mode Deep` after `& $p`. Or just choose your mode from the 
 
 **Running Minecraft first.** It uses Windows process information to identify running Java Minecraft instances and choose the correct PID. If it can read the game directory from its launch options, it links that folder. If it can't, you choose the folder yourself or skip folder checks.
 
-**Mod analyzer.** Checks up to 500 top-level mod JARs, including up to eight small embedded JARs per archive. Reads Fabric, Quilt, Forge and NeoForge metadata, class package paths and SHA-256 hashes. Looks for known client packages, recognizable mod names and generic module-like class names. Class/package matches are shown separately from weak filename matches.
+**Mod analyzer and module flags.** Checks up to 500 top-level mod JARs, including up to eight small embedded JARs per archive. Reads Fabric, Quilt, Forge and NeoForge metadata, class packages and SHA-256 hashes. It also inspects Java class names and class constant-pool strings for recognizable cheat-module names such as `AimAssist`, `KillAura`, `AutoCrystal`, `TriggerBot`, `AutoTotem`, `PlayerESP` and others. The terminal groups module flags by category and displays the mod JAR, class path and whether each match was a class name or embedded string.
 
 **Live runtime.** Checks JVM launch options and accessible loaded native DLLs. Standard and Deep also note known macro-capable processes without reading keyboard input or scripts. Deep mode can scan bounded samples of readable JVM memory for client-package and module strings, with separate consent.
 
@@ -36,13 +36,16 @@ For Deep mode, add `-Mode Deep` after `& $p`. Or just choose your mode from the 
 
 ## Results
 
-Mewo prints a verdict directly in CMD:
+Mewo prints a verdict directly in CMD, including a dedicated **MODULE FLAGS** section grouped by Combat, Crystal, Totem, Movement, Automation, Vision and Bypass. A module class name is a stronger artifact than an embedded string, but neither proves the module was enabled during gameplay.
 
-- **CHEAT CLIENT SIGNATURE FOUND** — a recognizable client package exists in a scanned JAR
-- **CHEAT CLIENT STRINGS FOUND** — client strings matched sampled JVM memory
-- **POSSIBLE CHEAT INDICATORS** — weaker names, traces or runtime findings
-- **NO CHEAT INDICATORS FOUND** — nothing matched in the checks that completed
-- **SCAN INCOMPLETE** — no scan stage finished
+Mewo prints these verdict labels:
+
+- **CHEAT CLIENT SIGNATURE FOUND** — recognizable client package in a scanned JAR
+- **CHEAT MODULE FLAGS FOUND** — classes named after known cheat modules were found in scanned JARs
+- **CLIENT STRINGS FOUND IN MEMORY** — client-related strings matched sampled JVM memory
+- **SUSPICIOUS STRINGS OR ARTIFACTS** — weaker names, constant-pool strings, traces, or runtime findings
+- **NO DETECTIONS IN COMPLETED CHECKS** — no configured signatures matched the checks that completed
+- **SCAN INCOMPLETE** — no scan stage completed
 
 It shows the actual evidence and which checks succeeded or were skipped. Native inline hooks are marked **NOT VERIFIED**: DLL enumeration and Java agents are not the same thing as byte-level hook detection.
 
@@ -67,4 +70,4 @@ This is an independent implementation. Meow's closed-source EXE and unpublished 
 
 ## Development
 
-v1.0.0 rebuild. Windows PowerShell 5.1 and PowerShell 7 syntax and self-tests run through [GitHub Actions](../../actions). The tests cover synthetic verdicts, Fabric JAR recognition and memory helper compilation. Actual launcher/runtime accuracy still needs real Minecraft test cases.
+v1.1.0 module-flag update. Windows PowerShell 5.1 and PowerShell 7 syntax and self-tests run through [GitHub Actions](../../actions). The tests cover synthetic verdicts, Fabric JAR recognition and memory helper compilation. Actual launcher/runtime accuracy still needs real Minecraft test cases.
