@@ -370,7 +370,22 @@ function Scan-GameArtifacts([string]$Root) {
         $folder = Join-Path $Root $relative
         if (-not (Test-Path -LiteralPath $folder -PathType Container)) { continue }
         foreach ($entry in @(Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue | Select-Object -First 350)) {
-            if ($relative -eq 'mods' -and -not $entry.PSIsContainer -and $entry.Name -match '(?i)\.(jar\.(disabled|old|bak)|dll|exe)
+            if ($relative -eq 'mods' -and -not $entry.PSIsContainer -and $entry.Name -match '(?i)\.(jar\.(disabled|old|bak)|dll|exe)$') {
+                $total++
+                Finding 'Info' 'Artifacts' 'Inactive or unusual mod file' ($entry.Name + '; no indication it was used.') '' $entry.Name
+            }
+            foreach ($rule in $script:Rules) {
+                if ($entry.Name -match $rule.name) {
+                    $total++
+                    Finding 'Review' 'Artifacts' 'Client-named file or config' ($relative + '/' + $entry.Name + ' resembles ' + $rule.label + '; could be left over from an older install.') $rule.id $entry.Name
+                    break
+                }
+            }
+        }
+    }
+    Say ('  ' + $total + ' relevant file or config names recorded.') 'Magenta'
+    Covered 'mod-artifacts' 'Completed' 'Examines file names in the selected Minecraft mods/config folders for possible leftover client markers. Does not read config contents.'
+}
 
 function Scan-Jvm([object[]]$Processes) {
     Section 'JVM and process launch'
