@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-$script:Version = '0.2.0'
+$script:Version = '0.4.0'
 $script:Findings = [System.Collections.Generic.List[object]]::new()
 $script:Mods = [System.Collections.Generic.List[object]]::new()
 $script:Modules = [System.Collections.Generic.List[object]]::new()
@@ -24,8 +24,28 @@ $script:Rules = @(
     @{ id = 'liquidbounce'; label = 'LiquidBounce'; path = '(?i)(^|/)net/ccbluex/liquidbounce/'; name = '(?i)liquidbounce' },
     @{ id = 'bleachhack'; label = 'BleachHack'; path = '(?i)(^|/)org/bleachhack/'; name = '(?i)bleachhack' },
     @{ id = 'thunderhack'; label = 'ThunderHack'; path = '(?i)(^|/)(thunder/hack|thunderhack)/'; name = '(?i)thunderhack' },
-    @{ id = 'rusherhack'; label = 'RusherHack'; path = '(?i)(^|/)org/rusherhack/'; name = '(?i)rusherhack' }
+    @{ id = 'rusherhack'; label = 'RusherHack'; path = '(?i)(^|/)org/rusherhack/'; name = '(?i)rusherhack' },
+    @{ id = 'forgehax'; label = 'ForgeHax'; path = '(?i)(^|/)dev/fiki/forgehax/'; name = '(?i)forgehax' },
+    @{ id = 'kamikblue'; label = 'KAMI Blue'; path = '(?i)(^|/)me/zeroeightsix/kami/'; name = '(?i)(kami[-_. ]?blue|kamiblue)' },
+    @{ id = 'lambda'; label = 'Lambda'; path = '(?i)(^|/)com/lambda/client/'; name = '(?i)(^|[-_. ])lambda([-_. ]|$)' },
+    @{ id = 'mathax'; label = 'MatHax'; path = '(?i)(^|/)xyz/mathax/mathaxclient/'; name = '(?i)mathax' },
+    @{ id = 'aristois'; label = 'Aristois'; path = '(?i)(^|/)me/deftware/'; name = '(?i)aristois' }
 )
+
+$script:ModuleNames = [ordered]@{
+    'Combat' = @('killaura','aimassist','triggerbot','silentaim','bowaimbot','maceaura','w-tap','shielddisabler')
+    'Crystal' = @('autocrystal','crystalaura','crystaloptimizer','doubleanchor','anchorexploder','autodtap','autohitcrystal')
+    'Totem' = @('autototem','totemoffhand','hovertotem','forceretotem','autoretotem')
+    'Movement' = @('fastbridge','bridgeassist','fastplace','nofall','inventorymove','elytraglide')
+    'Automation' = @('autoclicker','autopot','autoxp','autoarmor','autotool','automine','cheststealer','autorestock')
+    'ESP' = @('playeresp','storageesp','entityesp','xray','targethud')
+}
+$script:ModuleIndex = @{}
+foreach ($category in $script:ModuleNames.Keys) {
+    foreach ($name in $script:ModuleNames[$category]) {
+        $script:ModuleIndex[$name] = $category
+    }
+}
 
 function Say([string]$Message, [string]$Color = 'Gray') {
     Write-Host $Message -ForegroundColor $Color
@@ -33,7 +53,50 @@ function Say([string]$Message, [string]$Color = 'Gray') {
 
 function Section([string]$Title) {
     Write-Host ''
-    Say ('  -- ' + $Title.ToUpperInvariant() + ' ' + ('-' * [math]::Max(0, 52 - $Title.Length))) 'DarkCyan'
+    Say ('  ' + ('─' * 61)) 'DarkMagenta'
+    Say ('  ' + $Title.ToUpperInvariant()) 'Magenta'
+}
+
+function Banner {
+    try { & "$env:SystemRoot\System32\chcp.com" 65001 > $null } catch {}
+    try { Clear-Host } catch {}
+    $art = @'
+  ███╗   ███╗███████╗██╗    ██╗ ██████╗
+  ████╗ ████║██╔════╝██║    ██║██╔═══██╗
+  ██╔████╔██║█████╗  ██║ █╗ ██║██║   ██║
+  ██║╚██╔╝██║██╔══╝  ██║███╗██║██║   ██║
+  ██║ ╚═╝ ██║███████╗╚███╔███╔╝╚██████╔╝
+  ╚═╝     ╚═╝╚══════╝ ╚══╝╚══╝  ╚═════╝
+
+  ██████╗██╗     ██╗███████╗███╗   ██╗████████╗
+ ██╔════╝██║     ██║██╔════╝████╗  ██║╚══██╔══╝
+ ██║     ██║     ██║█████╗  ██╔██╗ ██║   ██║
+ ██║     ██║     ██║██╔══╝  ██║╚██╗██║   ██║
+ ╚██████╗███████╗██║███████╗██║ ╚████║   ██║
+  ╚═════╝╚══════╝╚═╝╚══════╝╚═╝  ╚═══╝   ╚═╝
+
+ ███████╗██╗   ██╗ ██████╗██╗  ██╗███████╗██████╗
+ ██╔════╝██║   ██║██╔════╝██║ ██╔╝██╔════╝██╔══██╗
+ █████╗  ██║   ██║██║     █████╔╝ █████╗  ██████╔╝
+ ██╔══╝  ██║   ██║██║     ██╔═██╗ ██╔══╝  ██╔══██╗
+ ██║     ╚██████╔╝╚██████╗██║  ██╗███████╗██║  ██║
+ ╚═╝      ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
+'@
+    Say $art 'Magenta'
+    Say '                  /\_/\      ' 'DarkMagenta'
+    Say '                 ( o.o )     ' 'DarkMagenta'
+    Say '                  > ^ <      ' 'DarkMagenta'
+    Say ('           Mewo v' + $script:Version + '  |  Made by Meowsilyy') 'Magenta'
+    Say '    Inspired by Meow Client Fucker (Tonynoh) and Yarp' 'DarkGray'
+    Say ('  ' + ('─' * 61)) 'DarkMagenta'
+    Say ('  ' + $Mode.ToUpperInvariant() + ' MODE    |    LOCAL INSPECTION    |    READ-ONLY') 'White'
+}
+
+function Stage([int]$Step, [int]$Total, [string]$Label) {
+    $filled = [int][Math]::Floor(32 * $Step / [Math]::Max(1,$Total))
+    $bar = ('█' * $filled) + ('░' * (32 - $filled))
+    $percentage = [int][Math]::Floor(100 * $Step / [Math]::Max(1,$Total))
+    Say ('  Scanning  ' + $bar + ' ' + $percentage + '%  ' + $Label) 'Magenta'
 }
 
 function Private-Path([string]$Value) {
@@ -153,8 +216,9 @@ function Choose-Instance([object[]]$Running) {
 }
 
 function Inspect-Jar([string]$Path) {
-    $metadata = [ordered]@{ loader = 'Unknown'; id = ''; name = ''; version = ''; classes = 0; matches = @(); error = '' }
+    $metadata = [ordered]@{ loader = 'Unknown'; id = ''; name = ''; version = ''; classes = 0; matches = @(); generic = @(); error = '' }
     $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $genericSeen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $zip = $null
     try {
         $zip = [IO.Compression.ZipFile]::OpenRead($Path)
@@ -164,6 +228,11 @@ function Inspect-Jar([string]$Path) {
                 $metadata.classes++
                 foreach ($rule in $script:Rules) {
                     if ($entry.FullName -match $rule.path) { [void]$seen.Add($rule.id) }
+                }
+                $leaf = [IO.Path]::GetFileNameWithoutExtension($entry.FullName)
+                $normalized = ($leaf -replace '[^a-zA-Z0-9]', '').ToLowerInvariant()
+                if ($script:ModuleIndex.ContainsKey($normalized)) {
+                    [void]$genericSeen.Add(($script:ModuleIndex[$normalized] + ': ' + $leaf))
                 }
             }
             if ($entry.Length -gt 262144) { continue }
@@ -194,6 +263,7 @@ function Inspect-Jar([string]$Path) {
             }
         }
         $metadata.matches = @($seen)
+        $metadata.generic = @($genericSeen)
     } catch {
         $metadata.error = $_.Exception.Message
     } finally {
@@ -219,7 +289,7 @@ function Scan-Mods([string]$Root) {
         $script:Mods.Add([pscustomobject]@{
             file = $file.Name; size = $file.Length; sha256 = $hash; lastWriteUtc = $file.LastWriteTimeUtc.ToString('o')
             loader = $info.loader; id = $info.id; name = $info.name; version = $info.version
-            classCount = $info.classes; signatures = @($info.matches); error = $info.error
+            classCount = $info.classes; signatures = @($info.matches); genericModules = @($info.generic); error = $info.error
         })
         if ($info.error) {
             Finding 'Review' 'Mods' 'Unreadable archive' ($file.Name + ': ' + $info.error) '' $file.Name
@@ -228,6 +298,9 @@ function Scan-Mods([string]$Root) {
         foreach ($id in @($info.matches)) {
             Finding 'Indicator' 'Mods' 'Known client package identifier' ($file.Name + ': ' + $id + '; confirm context.') $id $file.Name
         }
+        foreach ($flag in @($info.generic | Select-Object -First 20)) {
+            Finding 'Review' 'Generic Modules' 'Module-like class name' ($file.Name + ': ' + $flag + '; a class name is not proof the module ran.') '' $file.Name
+        }
         $idText = $file.BaseName + ' ' + $info.id + ' ' + $info.name
         foreach ($rule in $script:Rules) {
             if ($idText -match $rule.name -and @($info.matches) -notcontains $rule.id) {
@@ -235,7 +308,29 @@ function Scan-Mods([string]$Root) {
             }
         }
     }
+    foreach ($group in @($script:Mods.ToArray() | Where-Object { $_.id } | Group-Object -Property id | Where-Object { $_.Count -gt 1 })) {
+        $names = @($group.Group | Select-Object -ExpandProperty file)
+        Finding 'Review' 'Mods' 'Duplicate mod identifier' ($group.Name + ': ' + ($names -join ', ') + '; possible version conflict.') '' $group.Name
+    }
     Covered 'mod-jars' 'Completed' ('Read metadata and hashes for ' + $script:Mods.Count + ' JARs; no nested JAR scan.')
+}
+
+function Scan-GameArtifacts([string]$Root) {
+    Section 'Minecraft file artifacts'
+    $folder = Join-Path $Root 'mods'
+    if (-not (Test-Path -LiteralPath $folder -PathType Container)) {
+        Covered 'mod-artifacts' 'Unavailable' 'No mods directory found.'
+        return
+    }
+    $total = 0
+    foreach ($file in @(Get-ChildItem -LiteralPath $folder -File -ErrorAction SilentlyContinue | Select-Object -First 500)) {
+        if ($file.Name -match '(?i)\.(jar\.(disabled|old|bak)|dll|exe)$') {
+            $total++
+            Finding 'Info' 'Artifacts' 'Unusual or inactive mod-folder file' ($file.Name + '; no conclusions about use.') '' $file.Name
+        }
+    }
+    Say ('  Nonstandard file names: ' + $total) 'DarkGray'
+    Covered 'mod-artifacts' 'Completed' 'Lists selected nonstandard filenames at mods root. Does not open these files.'
 }
 
 function Scan-Jvm([object[]]$Processes) {
@@ -506,7 +601,7 @@ function Write-Report([string]$Root, [object[]]$Correlations) {
         timeline = @($script:Timeline.ToArray())
         findings = @($script:Findings.ToArray())
         correlations = @($Correlations)
-        limitations = @(
+        checksNotIncluded = @(
             'Not a verdict of innocence or cheating.'
             'A clean result cannot establish that a machine has no cheats.'
             'Windows timestamps can be altered or missing.'
@@ -519,9 +614,31 @@ function Write-Report([string]$Root, [object[]]$Correlations) {
     $report | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $file -Encoding UTF8
     $digest = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
     Set-Content -LiteralPath ($file + '.sha256') -Value $digest -Encoding Ascii
-    Say ('  ' + $report.outcome) 'Cyan'
+    $summary = [System.Collections.Generic.List[string]]::new()
+    $summary.Add('MEWO CLIENT FUCKER | v' + $script:Version)
+    $summary.Add('Session: ' + $script:SessionId)
+    $summary.Add('Instance: ' + (Private-Path $Root))
+    $summary.Add('Mode: ' + $Mode)
+    $summary.Add('Result: ' + $report.outcome)
+    $summary.Add(('Indicators: {0} | Needs review: {1} | JARs: {2} | DLLs: {3}' -f $indicatorCount, $reviewCount, $script:Mods.Count, $script:Modules.Count))
+    $summary.Add('')
+    $summary.Add('FINDINGS')
+    foreach ($finding in $script:Findings) {
+        $summary.Add(('[{0}] {1}: {2}' -f $finding.level, $finding.title, $finding.detail))
+    }
+    $summary.Add('')
+    $summary.Add('CHECK COVERAGE')
+    foreach ($check in $script:Coverage) {
+        $summary.Add(('[{0}] {1}: {2}' -f $check.status, $check.check, $check.explanation))
+    }
+    $summary.Add('')
+    $summary.Add('This is not an automatic cheating verdict. No report was uploaded.')
+    $summaryPath = [IO.Path]::ChangeExtension($file, '.txt')
+    $summary.ToArray() | Set-Content -LiteralPath $summaryPath -Encoding UTF8
+    Say ('  ' + $report.outcome) 'Magenta'
     Say ('  Indicators: {0} | Review: {1} | JARs: {2} | DLLs: {3}' -f $indicatorCount, $reviewCount, $script:Mods.Count, $script:Modules.Count) 'White'
-    Say ('  Report: ' + $file) 'Cyan'
+    Say ('  JSON: ' + $file) 'Magenta'
+    Say ('  Text: ' + $summaryPath) 'Magenta'
     Say ('  SHA-256: ' + $digest) 'DarkGray'
     Say '  Review the JSON report before sharing. No report was transmitted.' 'Gray'
 }
@@ -529,12 +646,7 @@ function Write-Report([string]$Root, [object[]]$Correlations) {
 function Main {
     if ($env:OS -ne 'Windows_NT') { throw 'Mewo requires Windows.' }
     try { $Host.UI.RawUI.WindowTitle = 'Mewo Client Fucker | Scanner' } catch {}
-    Say ''
-    Say '  +--------------------------------------------------------------+' 'DarkCyan'
-    Say '  |                  MEWO CLIENT FUCKER                          |' 'Cyan'
-    Say ('  |                Minecraft Inspector v{0}                   |' -f $script:Version) 'DarkCyan'
-    Say '  +--------------------------------------------------------------+' 'DarkCyan'
-    Say ('  MODE: {0}    LOCAL ONLY    READ ONLY' -f $Mode.ToUpperInvariant()) 'White'
+    Banner
     Section 'Consent'
     Say '  Inspects your selected Minecraft instance, mod JAR names and hashes,' 'White'
     Say '  matching JVM settings, and optionally loaded native DLLs and timestamps.' 'White'
@@ -558,22 +670,37 @@ function Main {
             $selected = @($running[0])
         }
     }
+    $total = if ($Mode -eq 'Quick') { 5 } elseif ($Mode -eq 'Deep') { 9 } else { 8 }
+    Stage 1 $total 'JVM launch checks'
     Scan-Jvm $selected
+    Stage 2 $total 'Mod signatures and hashes'
     Scan-Mods $root
+    Stage 3 $total 'File artifacts'
+    Scan-GameArtifacts $root
     if ($Mode -in @('Standard','Deep')) {
+        Stage 4 $total 'Loaded DLLs'
         Scan-Modules $selected
+        Stage 5 $total 'File timeline'
         Scan-Timeline $root
+        Stage 6 $total 'Macro software'
         Scan-Macros
     } else {
         Covered 'dlls' 'Skipped' 'Quick mode'
         Covered 'file-timeline' 'Skipped' 'Quick mode'
         Covered 'macro-software' 'Skipped' 'Quick mode'
     }
-    if ($Mode -eq 'Deep') { Scan-Memory $selected } else { Covered 'memory' 'Skipped' 'Deep mode only' }
+    if ($Mode -eq 'Deep') {
+        Stage 7 $total 'Optional live-memory check'
+        Scan-Memory $selected
+    } else {
+        Covered 'memory' 'Skipped' 'Deep mode only'
+    }
+    Stage ($total - 1) $total 'Evidence correlation'
     $correlations = @(Correlate-Evidence)
+    Stage $total $total 'Saving local report'
     Write-Report $root $correlations
     Say ''
-    Say '  Scan finished. All findings require context and human review.' 'DarkCyan'
+    Say '  Scan finished. Review the findings before making a decision.' 'Magenta'
 }
 
 try { Main } catch {
