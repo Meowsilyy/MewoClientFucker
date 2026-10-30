@@ -8,7 +8,7 @@
 
 $ErrorActionPreference = 'Stop'
 $script:ModeProvided = $PSBoundParameters.ContainsKey('Mode')
-$script:Version = '1.0.0'
+$script:Version = '1.1.0'
 $script:Started = [DateTime]::UtcNow
 $script:Session = [guid]::NewGuid().ToString('N')
 $script:Findings = [Collections.Generic.List[object]]::new()
@@ -43,17 +43,18 @@ $script:Rules = @(
     @{ id='backdoored'; name='Backdoored'; package='(?i)(^|/)backdoored/'; names='(?i)backdoored' }
 )
 $script:Generic = [ordered]@{
-    Combat=@('KillAura','AimAssist','TriggerBot','SilentAim','BowAimbot','MaceAura','ShieldDisabler')
-    Crystal=@('AutoCrystal','CrystalAura','AnchorAura','DoubleAnchor','AutoHitCrystal','AutoDTap')
-    Totem=@('AutoTotem','AutoRetotem','TotemOffhand','HoverTotem')
-    Movement=@('NoFall','InventoryMove','FastBridge','ElytraGlide','SpeedHack')
-    Automation=@('AutoClicker','AutoPot','AutoXP','AutoArmor','AutoMine','ChestStealer','AutoTool')
-    Vision=@('PlayerESP','StorageESP','EntityESP','XRay','BaseESP','ChunkFinder')
+    Combat=@('AimAssist','AimLock','KillAura','TriggerBot','SilentAim','BowAimbot','MaceAura','SilentMace','AutoMace','ShieldDisabler','ShieldBreaker','HitBox','Reach','WTap','JumpReset','SprintReset','AutoClicker','AutoPot','AntiWeakness','AutoWeapon')
+    Crystal=@('AutoCrystal','AutoHitCrystal','CrystalAura','CrystalMacro','CrystalOptimizer','AutoAnchor','AnchorAura','AnchorMacro','DoubleAnchor','SafeAnchor','AutoDTap','MarlowAnchor','PistonAura','AutoObsidian','Surround','Burrow','HoleFiller','AutoTrap','AutoCity','AutoWeb')
+    Totem=@('AutoTotem','AutoRetotem','TotemOffhand','HoverTotem','LegitTotem','ForceTotem','InventoryTotem','OffhandTotem','AutoDoubleHand')
+    Movement=@('NoFall','InventoryMove','FastBridge','BridgeAssist','ElytraGlide','ElytraFly','Fly','SpeedHack','Jesus','Step','Phase','Spider','NoSlow','AntiKnockback','Velocity','FastPlace','FastSwim')
+    Automation=@('AutoXP','AutoArmor','AutoMine','ChestStealer','AutoTool','AutoEat','AutoSell','AutoFish','AutoFarm','AutoRefill','AutoRestock','AutoPearl','AutoSwap','BedMacro','AutoFirework','AutoCraft','AuctionSniper','AutoLog')
+    Vision=@('PlayerESP','StorageESP','EntityESP','XRay','BaseESP','ChunkFinder','Freecam','Tracers','ChestESP','HoleESP','MobESP','PearlESP','NameTags','Fullbright','HealthIndicators','StashFinder','BaseFinder','SpawnerFinder')
+    Bypass=@('FakeLag','PingSpoof','Blink','Disabler','GrimBypass','VulcanBypass','MatrixBypass','WatchdogBypass','PacketCancel','NoPacket','Timer')
 }
 $script:GenericIndex = @{}
 foreach ($category in $script:Generic.Keys) {
     foreach ($item in $script:Generic[$category]) {
-        $script:GenericIndex[$item.ToLowerInvariant()] = $category
+        $script:GenericIndex[$item.ToLowerInvariant()] = [pscustomobject]@{ name=$item; category=$category }
     }
 }
 
@@ -109,7 +110,7 @@ function Hide-Home([string]$Value) {
 function Add-Finding([string]$Kind,[string]$Category,[string]$Title,[string]$Detail,[string]$Rule='', [string]$Evidence='') {
     $entry = [pscustomobject]@{ kind=$Kind; category=$Category; title=$Title; detail=$Detail; rule=$Rule; evidence=$Evidence }
     $script:Findings.Add($entry)
-    $color = switch ($Kind) { 'Client' { 'Red' } 'Memory' { 'Yellow' } 'Review' { 'DarkYellow' } default { 'Gray' } }
+    $color = switch ($Kind) { 'Client' { 'Red' } 'Module' { 'Yellow' } 'Memory' { 'Yellow' } 'String' { 'DarkYellow' } 'Review' { 'DarkYellow' } default { 'Gray' } }
     if ($Kind -ne 'Info') { Paint ('  [' + $Kind.ToUpperInvariant() + '] ' + $Title + ' — ' + $Detail) $color }
 }
 
@@ -256,11 +257,90 @@ function Choose-Target {
     else { Paint '  No game folder linked. Live process checks can still run.' 'Yellow' }
 }
 
+$script:ClassPoolSource=@'
+using System;
+using System.IO;
+using System.Text;
+using System.Collections.Generic;
+public static class MewoClassConstants
+{
+    static int U2(byte[] b, ref int i)
+    {
+        if (i + 2 > b.Length) throw new InvalidDataException("Truncated class.");
+        int v = (b[i] << 8) | b[i + 1];
+        i += 2;
+        return v;
+    }
+    public static string[] Read(Stream stream)
+    {
+        using (var data = new MemoryStream())
+        {
+            var chunk = new byte[65536];
+            int n;
+            while ((n = stream.Read(chunk, 0, chunk.Length)) > 0)
+            {
+                if (data.Length + n > 2097152) return new string[0];
+                data.Write(chunk, 0, n);
+            }
+            byte[] b = data.ToArray();
+            if (b.Length < 10 || b[0] != 0xCA || b[1] != 0xFE || b[2] != 0xBA || b[3] != 0xBE) return new string[0];
+            int i = 8, count = U2(b, ref i);
+            var result = new List<string>();
+            if (count > 12000) return result.ToArray();
+            for (int cp = 1; cp < count; cp++)
+            {
+                if (i >= b.Length) break;
+                int tag = b[i++];
+                int advance = 0;
+                if (tag == 1)
+                {
+                    int length = U2(b, ref i);
+                    if (i + length > b.Length) break;
+                    if (length <= 512) result.Add(Encoding.UTF8.GetString(b, i, length));
+                    i += length;
+                    continue;
+                }
+                if (tag == 3 || tag == 4 || tag == 9 || tag == 10 || tag == 11 || tag == 12 || tag == 17 || tag == 18) advance = 4;
+                else if (tag == 5 || tag == 6) { advance = 8; cp++; }
+                else if (tag == 7 || tag == 8 || tag == 16 || tag == 19 || tag == 20) advance = 2;
+                else if (tag == 15) advance = 3;
+                else break;
+                if (i + advance > b.Length) break;
+                i += advance;
+            }
+            return result.ToArray();
+        }
+    }
+}
+'@
+
+function Module-Match([string]$Value) {
+    if (-not $Value -or $Value.Length -gt 512) { return @() }
+    $found = [Collections.Generic.List[object]]::new()
+    $parts = @($Value -split '[\\./;:$\s<>()\[\],=\-]+')
+    foreach ($part in $parts) {
+        $key = ($part -replace '[^a-zA-Z0-9]', '').ToLowerInvariant()
+        if ($script:GenericIndex.ContainsKey($key)) {
+            $found.Add($script:GenericIndex[$key])
+        }
+    }
+    return @($found.ToArray())
+}
+
+function Read-ClassConstants([IO.Compression.ZipArchiveEntry]$Entry) {
+    if ($Entry.Length -gt 2097152) { return @() }
+    if (-not ('MewoClassConstants' -as [type])) {
+        Add-Type -TypeDefinition $script:ClassPoolSource -ErrorAction Stop
+    }
+    $stream=$Entry.Open()
+    try { return @([MewoClassConstants]::Read($stream)) } finally { $stream.Dispose() }
+}
+
 function Get-ArchiveInfo([IO.Compression.ZipArchive]$Archive,[string]$Label) {
     $result = [ordered]@{ loader='Unknown'; modId=''; name=''; version=''; classes=0; packages=@(); modules=@(); embedded=0; error='' }
     if ($Archive.Entries.Count -gt 45000) { $result.error = 'Archive has too many entries.'; return [pscustomobject]$result }
     $clientHits = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    $modules = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $moduleMap = @{}
     foreach ($item in $Archive.Entries) {
         $entryPath = $item.FullName.Replace('\','/')
         if ($entryPath.EndsWith('.class',[StringComparison]::OrdinalIgnoreCase)) {
@@ -269,9 +349,22 @@ function Get-ArchiveInfo([IO.Compression.ZipArchive]$Archive,[string]$Label) {
                 if ($entryPath -match $rule.package) { [void]$clientHits.Add($rule.id) }
             }
             $stem = [IO.Path]::GetFileNameWithoutExtension($entryPath)
-            $normalized = ($stem -replace '[^a-zA-Z0-9]','').ToLowerInvariant()
-            if ($script:GenericIndex.ContainsKey($normalized)) {
-                [void]$modules.Add(($script:GenericIndex[$normalized] + ': ' + $stem))
+            $stem = ($stem -split '\$')[0]
+            foreach ($flag in @(Module-Match $stem)) {
+                $key = $flag.name.ToLowerInvariant()
+                if (-not $moduleMap.ContainsKey($key)) {
+                    $moduleMap[$key] = [pscustomobject]@{ name=$flag.name; category=$flag.category; source='Class'; location=$entryPath }
+                }
+            }
+            if ($item.Length -gt 0 -and $item.Length -le 2097152) {
+                foreach ($constant in @(Read-ClassConstants $item)) {
+                    foreach ($flag in @(Module-Match $constant)) {
+                        $key = $flag.name.ToLowerInvariant()
+                        if (-not $moduleMap.ContainsKey($key)) {
+                            $moduleMap[$key] = [pscustomobject]@{ name=$flag.name; category=$flag.category; source='Constant'; location=$entryPath }
+                        }
+                    }
+                }
             }
         }
         if ($item.Length -gt 262144) { continue }
@@ -302,7 +395,7 @@ function Get-ArchiveInfo([IO.Compression.ZipArchive]$Archive,[string]$Label) {
         }
     }
     $result.packages = @($clientHits)
-    $result.modules = @($modules)
+    $result.modules = @($moduleMap.Values)
     return [pscustomobject]$result
 }
 
@@ -312,6 +405,8 @@ function Inspect-Jar([string]$Path) {
         $zip = [IO.Compression.ZipFile]::OpenRead($Path)
         $info = Get-ArchiveInfo $zip (Split-Path $Path -Leaf)
         $extra = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        $modules = @{}
+        foreach ($m in @($info.modules)) { $modules[$m.name.ToLowerInvariant()]=$m }
         $embeddedCount=0
         foreach ($entry in @($zip.Entries | Where-Object { $_.FullName -match '(?i)\.jar$' -and $_.Length -gt 0 -and $_.Length -le 8388608 } | Select-Object -First 8)) {
             try {
@@ -324,6 +419,12 @@ function Inspect-Jar([string]$Path) {
                     $embedded = Get-ArchiveInfo $nested $entry.FullName
                     $embeddedCount++
                     foreach ($id in @($embedded.packages)) { [void]$extra.Add($id) }
+                    foreach ($m in @($embedded.modules)) {
+                        $key=$m.name.ToLowerInvariant()
+                        if (-not $modules.ContainsKey($key)) {
+                            $modules[$key]=[pscustomobject]@{ name=$m.name; category=$m.category; source=$m.source; location=($entry.FullName + ' > ' + $m.location) }
+                        }
+                    }
                 } finally { $nested.Dispose(); $buffer.Dispose() }
             } catch {}
         }
@@ -332,7 +433,7 @@ function Inspect-Jar([string]$Path) {
         foreach ($id in $extra) { [void]$all.Add($id) }
         return [pscustomobject]@{
             loader=$info.loader; modId=$info.modId; name=$info.name; version=$info.version
-            classes=$info.classes; clientPackages=@($all); genericModules=@($info.modules)
+            classes=$info.classes; clientPackages=@($all); genericModules=@($modules.Values)
             embeddedJars=$embeddedCount; error=$info.error
         }
     } catch {
@@ -387,8 +488,9 @@ function Check-Mods {
                 Add-Finding 'Review' 'ModName' ($rule.name + ' name') ($file.Name + ' matches the client name; its class package did not match.') $rule.id $file.Name
             }
         }
-        if (@($details.genericModules).Count -gt 0) {
-            Add-Finding 'Info' 'Modules' 'Generic module-like classes' ($file.Name + ': ' + (@($details.genericModules) -join ', ')) '' $file.Name
+        foreach ($flag in @($details.genericModules | Select-Object -First 35)) {
+            $kind = if ($flag.source -eq 'Class') { 'Module' } else { 'String' }
+            Add-Finding $kind $flag.category $flag.name ($file.Name + ' -> ' + $flag.location + ' [' + $flag.source + ']') '' $file.Name
         }
         if ($done % 10 -eq 0 -or $done -eq $jars.Count) {
             $percent=[int][Math]::Floor(100*$done/[Math]::Max(1,$jars.Count))
