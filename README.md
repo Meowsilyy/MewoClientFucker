@@ -44,7 +44,7 @@ A filename or a string match isn't the same as catching a running cheat. Some mo
 
 ## Results
 
-Everything is shown at the end of the scan in CMD: what was checked, which checks were skipped, client indicators, and things that need a closer look.
+The scan summary, findings and check coverage appear in CMD. Afterward, press **M** to browse every mod, **D** for loaded DLLs, or **T** for the file timeline. Press Enter to quit the viewer.
 
 A copy is also saved in `Documents\Mewo-Reports` as JSON and TXT, with a SHA-256 checksum. Reports stay local unless the player chooses to share them.
 
