@@ -357,14 +357,16 @@ function Get-ArchiveInfo([IO.Compression.ZipArchive]$Archive,[string]$Label) {
                 }
             }
             if ($item.Length -gt 0 -and $item.Length -le 2097152) {
-                foreach ($constant in @(Read-ClassConstants $item)) {
-                    foreach ($flag in @(Module-Match $constant)) {
-                        $key = $flag.name.ToLowerInvariant()
-                        if (-not $moduleMap.ContainsKey($key)) {
-                            $moduleMap[$key] = [pscustomobject]@{ name=$flag.name; category=$flag.category; source='Constant'; location=$entryPath }
+                try {
+                    foreach ($constant in @(Read-ClassConstants $item)) {
+                        foreach ($flag in @(Module-Match $constant)) {
+                            $key = $flag.name.ToLowerInvariant()
+                            if (-not $moduleMap.ContainsKey($key)) {
+                                $moduleMap[$key] = [pscustomobject]@{ name=$flag.name; category=$flag.category; source='Constant'; location=$entryPath }
+                            }
                         }
                     }
-                }
+                } catch {}
             }
         }
         if ($item.Length -gt 262144) { continue }
@@ -744,7 +746,7 @@ function Check-Memory {
         'thunder/hack','rusherhack','dev/fiki/forgehax','xyz/mathax/mathaxclient',
         'com/lambda/client','me/deftware','keystrokesmod'
     )
-    $moduleNeedles=@('KillAura','AutoCrystal','TriggerBot','SilentAim','PlayerESP','ChestStealer','AutoTotem','MaceAura','AnchorAura')
+    $moduleNeedles=@('AimAssist','KillAura','TriggerBot','SilentAim','BowAimbot','MaceAura','ShieldBreaker','AutoCrystal','CrystalAura','CrystalMacro','AutoHitCrystal','AnchorAura','AnchorMacro','DoubleAnchor','AutoDTap','AutoTotem','AutoRetotem','HoverTotem','InventoryMove','NoFall','AutoClicker','AutoMine','ChestStealer','PlayerESP','StorageESP','BaseESP','XRay','Freecam','FakeLag','PingSpoof','GrimBypass')
     try {
         $out=[MewoMemoryScanner]::Scan([int]$script:Target.pid,[string[]](@($clientNeedles)+@($moduleNeedles)),512)
         $script:MemoryBytes=[long]$out.Bytes
