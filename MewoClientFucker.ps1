@@ -338,7 +338,7 @@ function Inspect-Jar([string]$Path) {
     } catch {
         return [pscustomobject]@{
             loader='Unknown'; modId=''; name=''; version=''; classes=0
-            clientPackages=@(); genericModules=@(); embeddedJars=0; error=$_.Exception.Message
+            clientPackages=@(); genericModules=@(); embeddedJars=0; error=($_.Exception.Message + ' [line ' + $_.InvocationInfo.ScriptLineNumber + ': ' + $_.InvocationInfo.Line.Trim() + ']')
         }
     } finally { if ($zip) { $zip.Dispose() } }
 }
