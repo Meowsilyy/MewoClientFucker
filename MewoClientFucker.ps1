@@ -94,10 +94,15 @@ function Banner {
 }
 
 function Stage([int]$Step, [int]$Total, [string]$Label) {
-    $filled = [int][Math]::Floor(32 * $Step / [Math]::Max(1,$Total))
-    $bar = ('█' * $filled) + ('░' * (32 - $filled))
-    $percentage = [int][Math]::Floor(100 * $Step / [Math]::Max(1,$Total))
-    Say ('  Scanning  ' + $bar + ' ' + $percentage + '%  ' + $Label) 'Magenta'
+    Say ('  [{0}/{1}] {2}' -f $Step, $Total, $Label) 'Magenta'
+}
+
+function ScanProgress([int]$Done, [int]$Total, [string]$Label) {
+    if ($Total -le 0) { return }
+    $filled = [int][Math]::Floor(28 * $Done / $Total)
+    $percent = [int][Math]::Floor(100 * $Done / $Total)
+    $bar = ('█' * $filled) + ('░' * (28 - $filled))
+    Say ('  {0} {1}%  ({2}/{3} {4})' -f $bar, $percent, $Done, $Total, $Label) 'Magenta'
 }
 
 function Private-Path([string]$Value) {
@@ -302,6 +307,10 @@ function Inspect-Jar([string]$Path) {
 
 function Scan-Mods([string]$Root) {
     Section 'Mod JARs and file integrity'
+    if (-not $Root) {
+        Covered 'mod-jars' 'Skipped' 'No instance folder was linked to the selected process.'
+        return
+    }
     $folder = Join-Path $Root 'mods'
     if (-not (Test-Path -LiteralPath $folder -PathType Container)) {
         Covered 'mod-jars' 'Unavailable' 'No mods directory found.'
@@ -309,11 +318,16 @@ function Scan-Mods([string]$Root) {
         return
     }
     $items = @(Get-ChildItem -LiteralPath $folder -Filter '*.jar' -File -ErrorAction SilentlyContinue | Sort-Object Name | Select-Object -First 400)
-    Say ('  Inspecting {0} top-level mod JARs.' -f $items.Count) 'Cyan'
+    Say ('  Checking {0} JARs in this instance.' -f $items.Count) 'Magenta'
+    $scanned = 0
     foreach ($file in $items) {
         $hash = ''
         try { $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash } catch {}
         $info = Inspect-Jar $file.FullName
+        $scanned++
+        if ($scanned % 10 -eq 0 -or $scanned -eq $items.Count) {
+            ScanProgress $scanned $items.Count 'mod JARs'
+        }
         $script:Mods.Add([pscustomobject]@{
             file = $file.Name; size = $file.Length; sha256 = $hash; lastWriteUtc = $file.LastWriteTimeUtc.ToString('o')
             loader = $info.loader; id = $info.id; name = $info.name; version = $info.version
@@ -326,8 +340,9 @@ function Scan-Mods([string]$Root) {
         foreach ($id in @($info.matches)) {
             Finding 'Indicator' 'Mods' 'Known client package identifier' ($file.Name + ': ' + $id + '; confirm context.') $id $file.Name
         }
-        foreach ($flag in @($info.generic | Select-Object -First 20)) {
-            Finding 'Review' 'Generic Modules' 'Module-like class name' ($file.Name + ': ' + $flag + '; a class name is not proof the module ran.') '' $file.Name
+        $genericFlags = @($info.generic | Select-Object -First 20)
+        if ($genericFlags.Count -gt 0) {
+            Finding 'Info' 'Generic Modules' 'Module-like class names' ($file.Name + ': ' + ($genericFlags -join ', ') + '; this alone does not identify a cheat.') '' $file.Name
         }
         $idText = $file.BaseName + ' ' + $info.id + ' ' + $info.name
         foreach ($rule in $script:Rules) {
@@ -345,6 +360,10 @@ function Scan-Mods([string]$Root) {
 
 function Scan-GameArtifacts([string]$Root) {
     Section 'Minecraft file artifacts'
+    if (-not $Root) {
+        Covered 'mod-artifacts' 'Skipped' 'No instance folder linked.'
+        return
+    }
     $folder = Join-Path $Root 'mods'
     if (-not (Test-Path -LiteralPath $folder -PathType Container)) {
         Covered 'mod-artifacts' 'Unavailable' 'No mods directory found.'
@@ -411,7 +430,9 @@ function Scan-Modules([object[]]$Processes) {
                 try { $record.signature = [string](Get-AuthenticodeSignature -LiteralPath $location).Status } catch { $record.signature = 'Unavailable' }
                 try { $record.sha256 = (Get-FileHash -LiteralPath $location -Algorithm SHA256).Hash } catch {}
                 if ($record.signature -notin @('Valid','Unavailable')) {
-                    Finding 'Review' 'Modules' 'Unverified native module' ($module.ModuleName + ': not proof of injection or cheating.') '' ('PID ' + $p.pid)
+                    if ($location -match '(?i)\\AppData\\Local\\Temp\\') {
+                        Finding 'Review' 'Modules' 'Unsigned module loaded from Temp' ($module.ModuleName + ' in PID ' + $p.pid + '; investigate its origin.') '' ('PID ' + $p.pid)
+                    }
                 }
             }
             $script:Modules.Add([pscustomobject]$record)
@@ -422,6 +443,10 @@ function Scan-Modules([object[]]$Processes) {
 
 function Scan-Timeline([string]$Root) {
     Section 'Minecraft file timeline'
+    if (-not $Root) {
+        Covered 'file-timeline' 'Skipped' 'No instance folder linked.'
+        return
+    }
     $recent = [datetime]::UtcNow.AddDays(-14)
     foreach ($relative in @('mods','config')) {
         $folder = Join-Path $Root $relative
@@ -669,6 +694,39 @@ function Write-Report([string]$Root, [object[]]$Correlations) {
     Say ('  Text: ' + $summaryPath) 'Magenta'
     Say ('  SHA-256: ' + $digest) 'DarkGray'
     Say '  Review the JSON report before sharing. No report was transmitted.' 'Gray'
+}
+
+function Show-Findings([object]$Game, [string]$Root) {
+    Section 'Results'
+    if ($Game) { Say ('  Process: PID ' + $Game.pid) 'Magenta' }
+    else { Say '  No live JVM was checked.' 'Yellow' }
+    if ($Root) { Say ('  Instance: ' + (Private-Path $Root)) 'White' }
+    else { Say '  No instance folder was checked.' 'Yellow' }
+    $hits = @($script:Findings.ToArray() | Where-Object { $_.level -eq 'Indicator' })
+    $reviews = @($script:Findings.ToArray() | Where-Object { $_.level -eq 'Review' })
+    $info = @($script:Findings.ToArray() | Where-Object { $_.level -eq 'Info' })
+    Say ('  Client indicators: {0}    Review: {1}    Notes: {2}' -f $hits.Count, $reviews.Count, $info.Count) 'Magenta'
+    if ($hits.Count -eq 0 -and $reviews.Count -eq 0) {
+        Say '  No confirmed client indicators in completed checks.' 'Green'
+    }
+    foreach ($group in @(
+        @{ title = 'CLIENT INDICATORS'; records = $hits; color = 'Yellow' },
+        @{ title = 'NEEDS REVIEW'; records = $reviews; color = 'DarkYellow' },
+        @{ title = 'OTHER NOTES'; records = $info; color = 'Gray' }
+    )) {
+        if ($group.records.Count -eq 0) { continue }
+        Section $group.title
+        foreach ($finding in $group.records) {
+            Say ('  ' + $finding.title) $group.color
+            Say ('    ' + $finding.detail) 'Gray'
+        }
+    }
+    Section 'Check status'
+    foreach ($check in $script:Coverage) {
+        $color = if ($check.status -eq 'Completed') { 'Green' } elseif ($check.status -eq 'Skipped') { 'Yellow' } else { 'DarkYellow' }
+        Say ('  [{0}] {1}: {2}' -f $check.status, $check.check, $check.explanation) $color
+    }
+    Say '  Findings need human review. Nothing was uploaded.' 'DarkGray'
 }
 
 function Main {
