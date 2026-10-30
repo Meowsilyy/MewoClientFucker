@@ -572,7 +572,7 @@ public static class MewoMemoryScanner
                 var next = region.BaseAddress + region.RegionSize;
                 if (next <= address) break;
                 var readAllowed = region.State == 0x1000 && (region.Protect & 0x100) == 0 && (region.Protect & 0x01) == 0 && (region.Protect & 0x02) == 0;
-                if (readAllowed && region.RegionSize <= 512UL * 1024UL * 1024UL)
+                if (readAllowed)
                 {
                     var sample = Math.Min(region.RegionSize, 64UL * 1024UL * 1024UL);
                     var offset = 0UL;
@@ -815,7 +815,7 @@ function Run-Tests {
             try { $writer.Write('{"id":"fixture","name":"Test Mod","version":"1.0"}') } finally { $writer.Dispose() }
         } finally { $archive.Dispose() }
         $parsed=Inspect-Jar $fixture
-        if ($parsed.loader -ne 'Fabric' -or $parsed.modId -ne 'fixture') { throw 'Fabric metadata test failed.' }
+        if ($parsed.loader -ne 'Fabric' -or $parsed.modId -ne 'fixture') { throw ('Fabric metadata test failed: ' + ($parsed | ConvertTo-Json -Compress -Depth 3)) }
         if (@($parsed.clientPackages) -notcontains 'meteor') { throw 'Client class match test failed.' }
     } finally { Remove-Item -LiteralPath $fixture -Force -ErrorAction SilentlyContinue }
     if (-not ('MewoMemoryScanner' -as [type])) { Add-Type -TypeDefinition $script:MemorySource -ErrorAction Stop }
@@ -832,7 +832,7 @@ function Main {
         Paint '  MEWO  —  CHOOSE MODE' 'Magenta'
         Paint '  [1] Quick  [2] Standard  [3] Deep' 'White'
         $answer=Read-Host '  Mode [2]'
-        $Mode=switch ($answer) { '1' { 'Quick' } '3' { 'Deep' } default { 'Standard' } }
+        $script:Mode=switch ($answer) { '1' { 'Quick' } '3' { 'Deep' } default { 'Standard' } }
     }
     Banner
     Heading 'Consent'
