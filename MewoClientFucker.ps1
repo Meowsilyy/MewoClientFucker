@@ -817,6 +817,29 @@ function Run-Tests {
         $parsed=Inspect-Jar $fixture
         if ($parsed.loader -ne 'Fabric' -or $parsed.modId -ne 'fixture') { throw ('Fabric metadata test failed: ' + ($parsed | ConvertTo-Json -Compress -Depth 3)) }
         if (@($parsed.clientPackages) -notcontains 'meteor') { throw 'Client class match test failed.' }
+        $testRoot=Join-Path ([IO.Path]::GetTempPath()) ('mewo-instance-'+[guid]::NewGuid().ToString('N'))
+        try {
+            $modsPath=Join-Path $testRoot 'mods'
+            New-Item -Path $modsPath -ItemType Directory -Force | Out-Null
+            Copy-Item -LiteralPath $fixture -Destination (Join-Path $modsPath 'fixture.jar')
+            $script:Root=$testRoot
+            $script:Findings.Clear()
+            $script:Coverage.Clear()
+            $script:Mods.Clear()
+            $script:DLLs.Clear()
+            $script:Timeline.Clear()
+            Check-Mods
+            if ((Verdict).status -ne 'CHEAT CLIENT SIGNATURE FOUND') { throw 'Full mod scan did not produce a client verdict.' }
+            Show-Result
+            $script:OutputDirectory=Join-Path $testRoot 'reports'
+            Save-Report
+            if (@(Get-ChildItem -LiteralPath $script:OutputDirectory -Filter '*.json' -File).Count -ne 1) { throw 'JSON report was not saved.' }
+            if (@(Get-ChildItem -LiteralPath $script:OutputDirectory -Filter '*.txt' -File).Count -ne 1) { throw 'Text report was not saved.' }
+        } finally {
+            Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
+            $script:Root=''
+            $script:OutputDirectory=''
+        }
     } finally { Remove-Item -LiteralPath $fixture -Force -ErrorAction SilentlyContinue }
     if (-not ('MewoMemoryScanner' -as [type])) { Add-Type -TypeDefinition $script:MemorySource -ErrorAction Stop }
     $script:Coverage.Clear()
