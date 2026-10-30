@@ -11,7 +11,7 @@ $script:ModeWasProvided = $PSBoundParameters.ContainsKey('Mode')
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-$script:Version = '0.5.0'
+$script:Version = '0.6.0'
 $script:Findings = [System.Collections.Generic.List[object]]::new()
 $script:Mods = [System.Collections.Generic.List[object]]::new()
 $script:Modules = [System.Collections.Generic.List[object]]::new()
@@ -632,6 +632,50 @@ function Correlate-Evidence {
     return @($correlated.ToArray())
 }
 
+function Get-ScanVerdict {
+    $all = @($script:Findings.ToArray())
+    $clientFiles = @($all | Where-Object { $_.category -eq 'Mods' -and $_.level -eq 'Indicator' })
+    $clientNames = @($all | Where-Object { $_.category -eq 'Mods' -and $_.level -eq 'Review' })
+    $strings = @($all | Where-Object { $_.category -eq 'Memory' -and $_.ruleId })
+    $traces = @($all | Where-Object { $_.category -eq 'Artifacts' -and $_.ruleId })
+    $agentFlags = @($all | Where-Object { $_.category -eq 'Runtime' -and $_.level -eq 'Review' })
+    $otherFlags = @($all | Where-Object { $_.level -eq 'Review' -and $_.category -notin @('Mods','Memory','Artifacts','Runtime') })
+    $checks = @($script:Coverage.ToArray())
+    $jvmChecked = @($checks | Where-Object { $_.check -eq 'jvm' -and $_.status -eq 'Completed' }).Count -gt 0
+    $modsChecked = @($checks | Where-Object { $_.check -eq 'mod-jars' -and $_.status -eq 'Completed' }).Count -gt 0
+    $notFinished = @($checks | Where-Object { $_.status -eq 'Unavailable' }).Count
+    if ($clientFiles.Count -gt 0) {
+        $status = 'CLIENT JAR SIGNATURE FOUND'
+        $reason = 'A known client package was found in a Minecraft mod JAR.'
+    } elseif ($strings.Count -gt 0) {
+        $status = 'CLIENT STRINGS DETECTED'
+        $reason = 'A known client-related string was found in sampled JVM memory. It may be a reference rather than loaded code.'
+    } elseif ($clientNames.Count -gt 0 -or $traces.Count -gt 0 -or $agentFlags.Count -gt 0 -or $otherFlags.Count -gt 0) {
+        $status = 'POSSIBLE CHEAT INDICATORS'
+        $reason = 'Unconfirmed names, runtime changes, or related traces need a closer look.'
+    } elseif (-not $jvmChecked -and -not $modsChecked) {
+        $status = 'SCAN INCOMPLETE'
+        $reason = 'Neither the running JVM nor Minecraft mod files were checked successfully.'
+    } else {
+        $status = 'NO CHEAT INDICATORS FOUND'
+        $reason = 'Nothing matched the current detection rules in the checks that completed.'
+    }
+    return [pscustomobject]@{
+        status = $status
+        explanation = $reason
+        cheatModSignatures = $clientFiles.Count
+        clientNameMatches = $clientNames.Count
+        clientMemoryStrings = $strings.Count
+        clientFileTraces = $traces.Count
+        jvmAgentFlags = $agentFlags.Count
+        otherReviewFlags = $otherFlags.Count
+        liveJvmChecked = $jvmChecked
+        modFilesChecked = $modsChecked
+        unavailableChecks = $notFinished
+        inlineHooks = 'NOT VERIFIED'
+    }
+}
+
 function Write-Report([string]$Root, [object[]]$Correlations) {
     Section 'Local evidence report'
     $target = $OutputDirectory
@@ -644,6 +688,7 @@ function Write-Report([string]$Root, [object[]]$Correlations) {
     $file = Join-Path $target ('Mewo-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + $script:SessionId.Substring(0,8) + '.json')
     $indicatorCount = @($script:Findings | Where-Object { $_.level -eq 'Indicator' }).Count
     $reviewCount = @($script:Findings | Where-Object { $_.level -eq 'Review' }).Count
+    $verdict = Get-ScanVerdict
     $report = [ordered]@{
         product = 'Mewo Client Fucker'
         version = $script:Version
@@ -652,7 +697,8 @@ function Write-Report([string]$Root, [object[]]$Correlations) {
         startedUtc = $script:Started.ToString('o')
         finishedUtc = [datetime]::UtcNow.ToString('o')
         minecraftInstance = Private-Path $Root
-        outcome = if ($indicatorCount -gt 0) { 'Known client indicators require manual review' } elseif ($reviewCount -gt 0) { 'Unconfirmed findings require review' } else { 'No configured indicators found in completed checks' }
+        outcome = $verdict.status
+        verdict = $verdict
         counts = @{ indicators = $indicatorCount; review = $reviewCount; mods = $script:Mods.Count; dlls = $script:Modules.Count }
         coverage = @($script:Coverage.ToArray())
         processes = @($script:Runtime.ToArray())
@@ -680,6 +726,8 @@ function Write-Report([string]$Root, [object[]]$Correlations) {
     $summary.Add('Instance: ' + (Private-Path $Root))
     $summary.Add('Mode: ' + $Mode)
     $summary.Add('Result: ' + $report.outcome)
+    $summary.Add('Why: ' + $verdict.explanation)
+    $summary.Add(('Client JARs: {0} | Client strings: {1} | File traces: {2} | Hook bytes: NOT VERIFIED' -f $verdict.cheatModSignatures, $verdict.clientMemoryStrings, $verdict.clientFileTraces))
     $summary.Add(('Indicators: {0} | Needs review: {1} | JARs: {2} | DLLs: {3}' -f $indicatorCount, $reviewCount, $script:Mods.Count, $script:Modules.Count))
     $summary.Add('')
     $summary.Add('FINDINGS')
@@ -704,22 +752,28 @@ function Write-Report([string]$Root, [object[]]$Correlations) {
 }
 
 function Show-Findings([object]$Game, [string]$Root) {
-    Section 'Results'
-    if ($Game) { Say ('  Process: PID ' + $Game.pid) 'Magenta' }
-    else { Say '  No live JVM was checked.' 'Yellow' }
-    if ($Root) { Say ('  Instance: ' + (Private-Path $Root)) 'White' }
-    else { Say '  No instance folder was checked.' 'Yellow' }
-    $hits = @($script:Findings.ToArray() | Where-Object { $_.level -eq 'Indicator' })
-    $reviews = @($script:Findings.ToArray() | Where-Object { $_.level -eq 'Review' })
-    $info = @($script:Findings.ToArray() | Where-Object { $_.level -eq 'Info' })
-    Say ('  Client indicators: {0}    Review: {1}    Notes: {2}' -f $hits.Count, $reviews.Count, $info.Count) 'Magenta'
-    if ($hits.Count -eq 0 -and $reviews.Count -eq 0) {
-        Say '  No confirmed client indicators in completed checks.' 'Green'
-    }
+    $verdict = Get-ScanVerdict
+    Section 'MEWO SCAN RESULT'
+    $color = if ($verdict.cheatModSignatures -gt 0) { 'Red' } elseif ($verdict.clientMemoryStrings -gt 0 -or $verdict.clientFileTraces -gt 0 -or $verdict.otherReviewFlags -gt 0 -or $verdict.clientNameMatches -gt 0 -or $verdict.jvmAgentFlags -gt 0) { 'Yellow' } else { 'Green' }
+    Say ('  ' + ('=' * 62)) $color
+    Say ('  ' + $verdict.status) $color
+    Say ('  ' + $verdict.explanation) 'White'
+    Say ('  ' + ('=' * 62)) $color
+    Say ('  Cheat mod package matches : ' + $verdict.cheatModSignatures) $(if ($verdict.cheatModSignatures) { 'Red' } else { 'Gray' })
+    Say ('  Client-name matches       : ' + $verdict.clientNameMatches) 'Gray'
+    Say ('  JVM client strings        : ' + $verdict.clientMemoryStrings) $(if ($verdict.clientMemoryStrings) { 'Yellow' } else { 'Gray' })
+    Say ('  Client file traces        : ' + $verdict.clientFileTraces) 'Gray'
+    Say ('  JVM agent flags           : ' + $verdict.jvmAgentFlags) 'Gray'
+    Say ('  Other review flags        : ' + $verdict.otherReviewFlags) 'Gray'
+    Say '  Native inline hooks       : NOT VERIFIED' 'DarkYellow'
+    if ($Game) { Say ('  Minecraft PID             : ' + $Game.pid) 'White' }
+    else { Say '  Minecraft PID             : NONE' 'Yellow' }
+    if ($Root) { Say ('  Linked instance           : ' + (Private-Path $Root)) 'Gray' }
+    else { Say '  Linked instance           : NONE' 'Yellow' }
     foreach ($group in @(
-        @{ title = 'CLIENT INDICATORS'; records = $hits; color = 'Yellow' },
-        @{ title = 'NEEDS REVIEW'; records = $reviews; color = 'DarkYellow' },
-        @{ title = 'OTHER NOTES'; records = $info; color = 'Gray' }
+        @{ title = 'CLIENT SIGNATURES'; records = @($script:Findings.ToArray() | Where-Object { $_.level -eq 'Indicator' }); color = 'Red' },
+        @{ title = 'NEEDS REVIEW'; records = @($script:Findings.ToArray() | Where-Object { $_.level -eq 'Review' }); color = 'Yellow' },
+        @{ title = 'OTHER NOTES'; records = @($script:Findings.ToArray() | Where-Object { $_.level -eq 'Info' }); color = 'Gray' }
     )) {
         if ($group.records.Count -eq 0) { continue }
         Section $group.title
@@ -728,13 +782,15 @@ function Show-Findings([object]$Game, [string]$Root) {
             Say ('    ' + $finding.detail) 'Gray'
         }
     }
-    Section 'Check status'
+    Section 'Check coverage'
     foreach ($check in $script:Coverage) {
         $color = if ($check.status -eq 'Completed') { 'Green' } elseif ($check.status -eq 'Skipped') { 'Yellow' } else { 'DarkYellow' }
         Say ('  [{0}] {1}: {2}' -f $check.status, $check.check, $check.explanation) $color
     }
-    Say '  Findings need human review. Nothing was uploaded.' 'DarkGray'
+    Say ''
+    Say '  Detection result only. It cannot prove whether a player is cheating.' 'DarkGray'
 }
+
 
 function Report-Details {
     if ($script:Mods.Count -eq 0 -and $script:Modules.Count -eq 0 -and $script:Timeline.Count -eq 0) { return }
