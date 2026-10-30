@@ -32,7 +32,20 @@ $script:Rules = @(
     @{ id = 'kamikblue'; label = 'KAMI Blue'; path = '(?i)(^|/)me/zeroeightsix/kami/'; name = '(?i)(kami[-_. ]?blue|kamiblue)' },
     @{ id = 'lambda'; label = 'Lambda'; path = '(?i)(^|/)com/lambda/client/'; name = '(?i)(^|[-_. ])lambda([-_. ]|$)' },
     @{ id = 'mathax'; label = 'MatHax'; path = '(?i)(^|/)xyz/mathax/mathaxclient/'; name = '(?i)mathax' },
-    @{ id = 'aristois'; label = 'Aristois'; path = '(?i)(^|/)me/deftware/'; name = '(?i)aristois' }
+    @{ id = 'aristois'; label = 'Aristois'; path = '(?i)(^|/)me/deftware/'; name = '(?i)aristois' },
+    @{ id = 'vape'; label = 'Vape Client'; path = '(?!)'; name = '(?i)(^|[-_. ])vape([-_. ]|$)' },
+    @{ id = 'salhack'; label = 'SalHack'; path = '(?!)'; name = '(?i)salhack' },
+    @{ id = 'raven'; label = 'Raven Client'; path = '(?!)'; name = '(?i)(^|[-_. ])raven([-_.+ ]|$)' },
+    @{ id = 'huzuni'; label = 'Huzuni'; path = '(?!)'; name = '(?i)huzuni' },
+    @{ id = 'jex'; label = 'Jex Client'; path = '(?!)'; name = '(?i)(^|[-_. ])jex([-_. ]|$)' },
+    @{ id = 'fdpclient'; label = 'FDPClient'; path = '(?!)'; name = '(?i)fdpclient' },
+    @{ id = 'konas'; label = 'Konas Client'; path = '(?!)'; name = '(?i)(^|[-_. ])konas([-_. ]|$)' },
+    @{ id = 'seppuku'; label = 'Seppuku Client'; path = '(?!)'; name = '(?i)seppuku' },
+    @{ id = 'kura'; label = 'Kura Client'; path = '(?!)'; name = '(?i)(^|[-_. ])kura([-_. ]|$)' },
+    @{ id = 'raion'; label = 'Raion'; path = '(?!)'; name = '(?i)(^|[-_. ])raion([-_. ]|$)' },
+    @{ id = 'trollhack'; label = 'TrollHack'; path = '(?!)'; name = '(?i)trollhack' },
+    @{ id = 'backdoored'; label = 'Backdoored Client'; path = '(?!)'; name = '(?i)backdoored' },
+    @{ id = 'doomsday'; label = 'Doomsday Client'; path = '(?!)'; name = '(?i)doomsday' }
 )
 
 $script:ModuleNames = [ordered]@{
@@ -598,13 +611,19 @@ function Scan-Memory([object[]]$Processes) {
         Covered 'memory' 'Unavailable' ('Cannot initialize native API bindings: ' + $_.Exception.Message)
         return
     }
-    $needles = @('meteordevelopment/meteorclient','meteordevelopment.meteorclient','net/wurstclient','net.wurstclient','net/ccbluex/liquidbounce','net.ccbluex.liquidbounce','org/bleachhack','org.bleachhack','thunder/hack','rusherhack','dev/fiki/forgehax','dev.fiki.forgehax','xyz/mathax/mathaxclient','xyz.mathax.mathaxclient','com/lambda/client','com.lambda.client','me/deftware','me.deftware')
+    $clientNeedles = @('meteordevelopment/meteorclient','meteordevelopment.meteorclient','net/wurstclient','net.wurstclient','net/ccbluex/liquidbounce','net.ccbluex.liquidbounce','org/bleachhack','org.bleachhack','thunder/hack','rusherhack','dev/fiki/forgehax','dev.fiki.forgehax','xyz/mathax/mathaxclient','xyz.mathax.mathaxclient','com/lambda/client','com.lambda.client','me/deftware','me.deftware')
+    $genericNeedles = @('KillAura','AutoCrystal','TriggerBot','ChestStealer','PlayerESP','SilentAim','InventoryMove','FastBridge','AutoTotem','MaceAura')
+    $needles = @($clientNeedles) + @($genericNeedles)
     $checks = 0
     foreach ($p in $Processes) {
         try {
             $hits = @([MewoMemory]::Check([int]$p.pid, [string[]]$needles, 256))
             $checks++
             foreach ($hit in $hits) {
+                if ($genericNeedles -contains $hit) {
+                    Finding 'Review' 'Memory Modules' 'Generic cheat-module string' ('PID ' + $p.pid + ': ' + $hit + '; a string can also be a reference in legitimate software.') '' ('PID ' + $p.pid)
+                    continue
+                }
                 $id = ''
                 foreach ($rule in $script:Rules) {
                     if ($hit -match $rule.path -or $hit -match $rule.id) { $id = $rule.id; break }
@@ -677,7 +696,8 @@ function Get-ScanVerdict {
     $strings = @($all | Where-Object { $_.category -eq 'Memory' -and $_.ruleId })
     $traces = @($all | Where-Object { $_.category -eq 'Artifacts' -and $_.ruleId })
     $agentFlags = @($all | Where-Object { $_.category -eq 'Runtime' -and $_.level -eq 'Review' })
-    $otherFlags = @($all | Where-Object { $_.level -eq 'Review' -and $_.category -notin @('Mods','Memory','Artifacts','Runtime') })
+    $genericStrings = @($all | Where-Object { $_.category -eq 'Memory Modules' })
+    $otherFlags = @($all | Where-Object { $_.level -eq 'Review' -and $_.category -notin @('Mods','Memory','Memory Modules','Artifacts','Runtime') })
     $checks = @($script:Coverage.ToArray())
     $jvmChecked = @($checks | Where-Object { $_.check -eq 'jvm' -and $_.status -eq 'Completed' }).Count -gt 0
     $modsChecked = @($checks | Where-Object { $_.check -eq 'mod-jars' -and $_.status -eq 'Completed' }).Count -gt 0
@@ -688,7 +708,7 @@ function Get-ScanVerdict {
     } elseif ($strings.Count -gt 0) {
         $status = 'CLIENT STRINGS DETECTED'
         $reason = 'A known client-related string was found in sampled JVM memory. It may be a reference rather than loaded code.'
-    } elseif ($clientNames.Count -gt 0 -or $traces.Count -gt 0 -or $agentFlags.Count -gt 0 -or $otherFlags.Count -gt 0) {
+    } elseif ($clientNames.Count -gt 0 -or $traces.Count -gt 0 -or $agentFlags.Count -gt 0 -or $otherFlags.Count -gt 0 -or $genericStrings.Count -gt 0) {
         $status = 'POSSIBLE CHEAT INDICATORS'
         $reason = 'Unconfirmed names, runtime changes, or related traces need a closer look.'
     } elseif (-not $jvmChecked -and -not $modsChecked) {
@@ -704,6 +724,7 @@ function Get-ScanVerdict {
         cheatModSignatures = $clientFiles.Count
         clientNameMatches = $clientNames.Count
         clientMemoryStrings = $strings.Count
+        genericMemoryStrings = $genericStrings.Count
         clientFileTraces = $traces.Count
         jvmAgentFlags = $agentFlags.Count
         otherReviewFlags = $otherFlags.Count
@@ -765,7 +786,7 @@ function Write-Report([string]$Root, [object[]]$Correlations) {
     $summary.Add('Mode: ' + $Mode)
     $summary.Add('Result: ' + $report.outcome)
     $summary.Add('Why: ' + $verdict.explanation)
-    $summary.Add(('Client JARs: {0} | Client strings: {1} | File traces: {2} | Hook bytes: NOT VERIFIED' -f $verdict.cheatModSignatures, $verdict.clientMemoryStrings, $verdict.clientFileTraces))
+    $summary.Add(('Client JARs: {0} | Client strings: {1} | Module strings: {2} | File traces: {3} | Hook bytes: NOT VERIFIED' -f $verdict.cheatModSignatures, $verdict.clientMemoryStrings, $verdict.genericMemoryStrings, $verdict.clientFileTraces))
     $summary.Add(('Indicators: {0} | Needs review: {1} | JARs: {2} | DLLs: {3}' -f $indicatorCount, $reviewCount, $script:Mods.Count, $script:Modules.Count))
     $summary.Add('')
     $summary.Add('FINDINGS')
@@ -800,6 +821,7 @@ function Show-Findings([object]$Game, [string]$Root) {
     Say ('  Cheat mod package matches : ' + $verdict.cheatModSignatures) $(if ($verdict.cheatModSignatures) { 'Red' } else { 'Gray' })
     Say ('  Client-name matches       : ' + $verdict.clientNameMatches) 'Gray'
     Say ('  JVM client strings        : ' + $verdict.clientMemoryStrings) $(if ($verdict.clientMemoryStrings) { 'Yellow' } else { 'Gray' })
+    Say ('  Generic module strings     : ' + $verdict.genericMemoryStrings) 'Gray'
     Say ('  Client file traces        : ' + $verdict.clientFileTraces) 'Gray'
     Say ('  JVM agent flags           : ' + $verdict.jvmAgentFlags) 'Gray'
     Say ('  Other review flags        : ' + $verdict.otherReviewFlags) 'Gray'
