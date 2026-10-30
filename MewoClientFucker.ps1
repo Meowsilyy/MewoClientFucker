@@ -390,26 +390,32 @@ function Scan-GameArtifacts([string]$Root) {
 function Scan-Jvm([object[]]$Processes) {
     Section 'JVM and process launch'
     if ($Processes.Count -eq 0) {
-        Covered 'jvm' 'Unavailable' 'No running instance process associated with the selected folder.'
-        Finding 'Info' 'Runtime' 'No matching process' 'Close/reopen the game or select the active instance to enable runtime checks.'
+        Covered 'jvm' 'Unavailable' 'No Minecraft Java process was selected.'
+        Finding 'Info' 'Runtime' 'Live process unavailable' 'Only folder checks can run without an active Minecraft Java process.'
         return
     }
     foreach ($p in $Processes) {
         $script:Runtime.Add([pscustomobject]@{ pid = $p.pid; name = $p.name; startedUtc = $p.startedUtc; executable = $p.executable })
-        Say ('  PID {0}: {1}' -f $p.pid, $p.name) 'White'
+        Say ('  Checking PID ' + $p.pid) 'Magenta'
         foreach ($check in @(
-            @{ name = 'Java agent'; expression = '(?i)(?:^|\s)-javaagent(?:\s|:)' },
+            @{ name = 'Java instrumentation agent'; expression = '(?i)(?:^|\s)-javaagent(?:\s|:)' },
             @{ name = 'Native Java agent'; expression = '(?i)(?:^|\s)-agent(path|lib):' },
             @{ name = 'Bootstrap classpath override'; expression = '(?i)-Xbootclasspath' },
             @{ name = 'Additional Fabric mods'; expression = '(?i)-Dfabric\.(addMods|loadMods|classPathGroups)=' },
             @{ name = 'Mixin override'; expression = '(?i)-D(mixin\.configs|fabric\.mixin\.configs)=' }
         )) {
             if ($p.command -match $check.expression) {
-                Finding 'Review' 'Runtime' $check.name ('PID ' + $p.pid + '; this can be legitimate.') '' ('PID ' + $p.pid)
+                Finding 'Review' 'Runtime' $check.name ('PID ' + $p.pid + ': JVM launch has this option; it may be normal.') '' ('PID ' + $p.pid)
+            }
+        }
+        foreach ($rule in $script:Rules) {
+            if (-not $rule.name) { continue }
+            if ($p.command -match ('(?i)(?:[\\/]|^|[\s"''])(?:' + $rule.id + ')(?:[-_.\s\\/]|\.jar\b)')) {
+                Finding 'Review' 'Launch' 'Client identifier in launch arguments' ('PID ' + $p.pid + ': ' + $rule.label + '; check the selected launcher.') $rule.id ('PID ' + $p.pid)
             }
         }
     }
-    Covered 'jvm' 'Completed' 'Checked command-line option presence without retaining sensitive launch arguments.'
+    Covered 'jvm' 'Completed' 'Checked process launch settings and known names; original command lines are not stored.'
 }
 
 function Scan-Modules([object[]]$Processes) {
@@ -543,7 +549,7 @@ public static class MewoMemory
                 if (readable)
                 {
                     ulong offset = 0;
-                    ulong sample = Math.Min(region.RegionSize, 4UL * 1024UL * 1024UL);
+                    ulong sample = Math.Min(region.RegionSize, 16UL * 1024UL * 1024UL);
                     while (offset < sample && scanned < cap)
                     {
                         int requested = (int)Math.Min((ulong)block.Length, sample - offset);
@@ -581,7 +587,7 @@ function Scan-Memory([object[]]$Processes) {
         Covered 'memory' 'Unavailable' 'No associated running Minecraft process.'
         return
     }
-    Say '  Deep mode reads up to 64 MiB per selected Java process for known strings.' 'Yellow'
+    Say '  Deep mode samples up to 256 MiB per selected Java process for configured strings.' 'Yellow'
     Say '  It does not keep raw memory, but private data may be encountered during inspection.' 'Yellow'
     if ((Read-Host '  Allow this additional memory inspection? [y/N]') -notmatch '^(?i:y|yes)$') {
         Covered 'memory' 'Skipped' 'Player declined optional process memory check.'
@@ -591,11 +597,11 @@ function Scan-Memory([object[]]$Processes) {
         Covered 'memory' 'Unavailable' ('Cannot initialize native API bindings: ' + $_.Exception.Message)
         return
     }
-    $needles = @('meteordevelopment/meteorclient','meteordevelopment.meteorclient','net/wurstclient','net.wurstclient','net/ccbluex/liquidbounce','net.ccbluex.liquidbounce','org/bleachhack','org.bleachhack','thunder/hack','rusherhack','dev/fiki/forgehax','dev.fiki.forgehax','xyz/mathax/mathaxclient','xyz.mathax.mathaxclient')
+    $needles = @('meteordevelopment/meteorclient','meteordevelopment.meteorclient','net/wurstclient','net.wurstclient','net/ccbluex/liquidbounce','net.ccbluex.liquidbounce','org/bleachhack','org.bleachhack','thunder/hack','rusherhack','dev/fiki/forgehax','dev.fiki.forgehax','xyz/mathax/mathaxclient','xyz.mathax.mathaxclient','com/lambda/client','com.lambda.client','me/deftware','me.deftware')
     $checks = 0
     foreach ($p in $Processes) {
         try {
-            $hits = @([MewoMemory]::Check([int]$p.pid, [string[]]$needles, 64))
+            $hits = @([MewoMemory]::Check([int]$p.pid, [string[]]$needles, 256))
             $checks++
             foreach ($hit in $hits) {
                 $id = ''
@@ -609,7 +615,38 @@ function Scan-Memory([object[]]$Processes) {
             Finding 'Info' 'Memory' 'Inspection unavailable' ('PID ' + $p.pid + ': ' + $_.Exception.Message)
         }
     }
-    Covered 'memory' $(if ($checks -gt 0) { 'Completed' } else { 'Unavailable' }) 'Bounded 64 MiB per process, page sampling; no guarantee of complete memory coverage.'
+    Covered 'memory' $(if ($checks -gt 0) { 'Completed' } else { 'Unavailable' }) 'Read up to 256 MiB per process across sampled readable pages; this is not complete process memory coverage.'
+}
+
+function Scan-Dns {
+    Section 'Optional client site traces'
+    Say '  Checks only known client website names in the local Windows DNS cache.' 'Yellow'
+    Say '  A cached domain can mean a website visit, not cheating or a client launch.' 'Gray'
+    if ((Read-Host '  Check these limited DNS names? [y/N]') -notmatch '^(?i:y|yes)$') {
+        Covered 'dns-cache' 'Skipped' 'Player declined DNS cache lookup.'
+        return
+    }
+    $knownDomains = @(
+        @{ id = 'meteor'; label = 'Meteor Client'; domain = 'meteorclient.com' },
+        @{ id = 'wurst'; label = 'Wurst Client'; domain = 'wurstclient.net' },
+        @{ id = 'liquidbounce'; label = 'LiquidBounce'; domain = 'liquidbounce.net' }
+    )
+    try {
+        $entries = @(Get-DnsClientCache -ErrorAction Stop | Select-Object -ExpandProperty Entry -Unique)
+        $hits = 0
+        foreach ($domain in $knownDomains) {
+            foreach ($entry in $entries) {
+                if ($entry -ieq $domain.domain -or $entry.EndsWith('.' + $domain.domain, [StringComparison]::OrdinalIgnoreCase)) {
+                    $hits++
+                    Finding 'Info' 'DNS' 'Client website in Windows DNS cache' ($domain.label + ': ' + $entry + '; website resolution is not evidence the client ran.') $domain.id $entry
+                }
+            }
+        }
+        Say ('  Client-site cache records found: ' + $hits) 'Gray'
+        Covered 'dns-cache' 'Completed' 'Only checked three known client website domains. Unrelated cached domain names are discarded.'
+    } catch {
+        Covered 'dns-cache' 'Unavailable' 'Windows DNS cache query unavailable.'
+    }
 }
 
 function Correlate-Evidence {
@@ -841,7 +878,7 @@ function Main {
     Section 'Consent'
     Say '  Mewo checks the selected Minecraft process and, when linked,' 'White'
     Say '  its mods, JVM options, DLLs and recent local file timestamps.' 'White'
-    Say '  Deep mode asks separately before sampling JVM memory.' 'White'
+    Say '  Deep mode asks separately before sampling JVM memory and DNS names.' 'White'
     Say '  Nothing is uploaded. No keystrokes or screenshots are collected.' 'White'
     if ((Read-Host '  Allow this scan? [y/N]') -notmatch '^(?i:y|yes)$') {
         Say '  Scan cancelled.' 'Yellow'
@@ -864,7 +901,7 @@ function Main {
     $root = Choose-Instance $game
     if ($root) { Say ('  Folder: ' + (Private-Path $root)) 'White' }
     else { Say '  No instance folder linked. Live process checks will still run.' 'Yellow' }
-    $total = if ($Mode -eq 'Quick') { 5 } elseif ($Mode -eq 'Deep') { 9 } else { 8 }
+    $total = if ($Mode -eq 'Quick') { 5 } elseif ($Mode -eq 'Deep') { 10 } else { 8 }
     Stage 1 $total 'JVM'
     Scan-Jvm $selected
     Stage 2 $total 'Mod JARs'
@@ -886,8 +923,11 @@ function Main {
     if ($Mode -eq 'Deep') {
         Stage 7 $total 'Optional JVM memory'
         Scan-Memory $selected
+        Stage 8 $total 'Optional DNS client-site traces'
+        Scan-Dns
     } else {
         Covered 'memory' 'Skipped' 'Deep mode only'
+        Covered 'dns-cache' 'Skipped' 'Deep mode only'
     }
     Stage ($total - 1) $total 'Evidence check'
     $correlations = @(Correlate-Evidence)
