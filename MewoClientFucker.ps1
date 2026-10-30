@@ -1097,7 +1097,7 @@ function Run-Tests {
     if ((Verdict).status -ne 'CHEAT MODULE FLAGS FOUND') { throw 'Module class verdict failed.' }
     $script:Findings.Clear()
     Add-Finding 'String' 'Crystal' 'AutoCrystal' 'fixture.jar -> classes/Normal.class [Constant]' '' 'fixture.jar'
-    if ((Verdict).status -ne 'SUSPICIOUS STRINGS OR ARTIFACTS') { throw 'Module string verdict failed.' }
+    if ((Verdict).status -ne 'PAST TRACES OR UNCONFIRMED INDICATORS') { throw 'Module string verdict failed.' }
     $script:Findings.Clear()
     $script:Findings.Clear()
     Add-Finding 'Injection' 'DLL' 'Prestige Client named DLL loaded' 'Prestige.dll in target JVM' 'prestige' 'Prestige.dll'
