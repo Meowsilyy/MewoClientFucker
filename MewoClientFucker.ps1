@@ -485,6 +485,17 @@ function Check-Traces {
     Mark 'traces' 'Completed' 'Scoped to the selected Minecraft mods/config directory, not personal files.'
 }
 
+function Check-MacroTools {
+    Heading 'Macro-capable software'
+    $known=@('AutoHotkey','AutoHotkey64','AutoHotkey32','AutoIt3','PuloversMacroCreator')
+    $found=@(Get-Process -Name $known -ErrorAction SilentlyContinue)
+    foreach ($item in $found) {
+        Add-Finding 'Info' 'Macros' 'Macro-capable process running' ($item.ProcessName + ' PID ' + $item.Id + '; not evidence that a Minecraft macro was active.')
+    }
+    Paint ('  ' + $found.Count + ' known macro-tool processes observed.') 'Gray'
+    Mark 'macros' 'Completed' 'Checks process names only; no keyboard activity or macro files collected.'
+}
+
 function Check-Dns {
     Heading 'Optional DNS cache traces'
     if (-not (Confirm 'Look for three known client websites in the Windows DNS cache?')) {
@@ -875,7 +886,11 @@ function Main {
     if ($Mode -in @('Standard','Deep')) {
         Heading 'Phase 4 | Native modules'
         Check-Modules
-    } else { Mark 'dlls' 'Skipped' 'Quick mode.' }
+        Check-MacroTools
+    } else {
+        Mark 'dlls' 'Skipped' 'Quick mode.'
+        Mark 'macros' 'Skipped' 'Quick mode.'
+    }
     if ($Mode -eq 'Deep') {
         Heading 'Phase 5 | Memory signatures'
         Check-Memory
