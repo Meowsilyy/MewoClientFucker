@@ -1,7 +1,8 @@
 ﻿param(
     [ValidateSet('Quick','Standard','Deep')][string]$Mode = 'Standard',
     [string]$InstancePath = '',
-    [string]$OutputDirectory = ''
+    [string]$OutputDirectory = '',
+    [int]$ProcessId = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -9,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-$script:Version = '0.4.0'
+$script:Version = '0.5.0'
 $script:Findings = [System.Collections.Generic.List[object]]::new()
 $script:Mods = [System.Collections.Generic.List[object]]::new()
 $script:Modules = [System.Collections.Generic.List[object]]::new()
@@ -143,33 +144,32 @@ function Instance-At([string]$Candidate) {
 function Game-Directory([string]$CommandLine) {
     if ($CommandLine -match '--gameDir\s+"([^"]+)"') { return $Matches[1] }
     if ($CommandLine -match '--gameDir\s+([^\s]+)') { return $Matches[1] }
+    if ($CommandLine -match '-Dfabric\.gameDir="([^"]+)"') { return $Matches[1] }
+    if ($CommandLine -match '-Dfabric\.gameDir=([^\s]+)') { return $Matches[1] }
     return ''
 }
 
 function Running-Games {
-    $result = [System.Collections.Generic.List[object]]::new()
-    foreach ($p in @(Get-Process -Name java,javaw -ErrorAction SilentlyContinue)) {
-        $command = ''
-        try {
-            $record = Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId = ' + $p.Id)
-            $command = [string]$record.CommandLine
-        } catch {}
-        $dir = Game-Directory $command
-        if (-not $dir -and $command -notmatch '(?i)(minecraft|fabricmc|quiltmc|neoforge|lwjgl|forge)') { continue }
-        $start = ''
-        try { $start = $p.StartTime.ToUniversalTime().ToString('o') } catch {}
-        $binary = ''
-        try { $binary = Private-Path $p.Path } catch {}
-        $result.Add([pscustomobject]@{
-            pid = $p.Id
-            name = $p.ProcessName
-            startedUtc = $start
-            executable = $binary
-            instance = Instance-At $dir
+    $results = [System.Collections.Generic.List[object]]::new()
+    $processes = @()
+    try { $processes = @(Get-CimInstance Win32_Process -Filter "Name = 'java.exe' OR Name = 'javaw.exe'" -ErrorAction Stop) } catch {}
+    foreach ($p in $processes) {
+        $command = [string]$p.CommandLine
+        $gameDir = Game-Directory $command
+        if (-not $gameDir -and $command -notmatch '(?i)(minecraft|fabricmc|quiltmc|neoforge|lwjgl|forge|net\.minecraft\.client)') { continue }
+        $started = ''
+        try { $started = (Get-Process -Id $p.ProcessId -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o') } catch {}
+        $results.Add([pscustomobject]@{
+            pid = [int]$p.ProcessId
+            name = [string]$p.Name
+            startedUtc = $started
+            executable = Private-Path ([string]$p.ExecutablePath)
+            instance = Instance-At $gameDir
+            gameDir = $gameDir
             command = $command
         })
     }
-    return @($result.ToArray())
+    return @($results.ToArray())
 }
 
 function Discover-Instances {
@@ -193,26 +193,54 @@ function Discover-Instances {
     return @($results.ToArray() | Select-Object -Unique)
 }
 
-function Choose-Instance([object[]]$Running) {
-    if ($InstancePath) {
-        $candidate = Instance-At $InstancePath
-        if (-not $candidate) { throw 'The selected path is not a recognized Minecraft instance.' }
-        return $candidate
+function Choose-Game([object[]]$Running) {
+    if ($ProcessId -gt 0) {
+        $matched = @($Running | Where-Object { $_.pid -eq $ProcessId })
+        if ($matched.Count -ne 1) { throw ('PID ' + $ProcessId + ' was not detected as a Minecraft Java process.') }
+        return $matched[0]
     }
-    $available = [System.Collections.Generic.List[string]]::new()
-    foreach ($p in $Running) { if ($p.instance) { $available.Add($p.instance) } }
-    foreach ($path in @(Discover-Instances)) { $available.Add($path) }
-    $options = @($available.ToArray() | Select-Object -Unique)
-    if ($options.Count -eq 0) {
-        return Instance-At (Read-Host '  Enter your Minecraft instance or mods folder')
+    if ($Running.Count -eq 0) {
+        Say '  No running Minecraft Java process found.' 'Yellow'
+        return $null
     }
-    for ($i = 0; $i -lt $options.Count; $i++) { Say ('  {0,2}. {1}' -f ($i + 1), (Private-Path $options[$i])) 'White' }
-    if ($options.Count -eq 1) { return $options[0] }
-    $answer = Read-Host '  Choose an instance [1]'
-    if (-not $answer) { return $options[0] }
+    foreach ($game in $Running) {
+        $dir = if ($game.instance) { Private-Path $game.instance } else { 'game folder unknown' }
+        Say ('  PID {0} | {1} | {2}' -f $game.pid, $game.name, $dir) 'White'
+    }
+    if ($Running.Count -eq 1) {
+        Say ('  Selected running Minecraft PID ' + $Running[0].pid) 'Magenta'
+        return $Running[0]
+    }
+    $answer = Read-Host '  Enter the PID you want to scan'
     $number = 0
-    if (-not [int]::TryParse($answer, [ref]$number) -or $number -lt 1 -or $number -gt $options.Count) { throw 'Invalid instance selection.' }
-    return $options[$number - 1]
+    if (-not [int]::TryParse($answer, [ref]$number)) { throw 'Please enter one of the displayed PIDs.' }
+    $matched = @($Running | Where-Object { $_.pid -eq $number })
+    if ($matched.Count -ne 1) { throw 'That PID was not in the Minecraft list.' }
+    return $matched[0]
+}
+
+function Choose-Instance([object]$Game) {
+    if ($InstancePath) {
+        $path = Instance-At $InstancePath
+        if (-not $path) { throw '-InstancePath must point to a Minecraft instance.' }
+        return $path
+    }
+    if ($Game -and $Game.instance) { return $Game.instance }
+    Say '  The selected process did not expose a usable game directory.' 'Yellow'
+    Say '  Folder checks are optional. You choose the folder; Mewo will not guess.' 'Gray'
+    $available = @(Discover-Instances)
+    for ($i = 0; $i -lt $available.Count; $i++) {
+        Say ('  {0}. {1}' -f ($i + 1), (Private-Path $available[$i])) 'Gray'
+    }
+    $answer = Read-Host '  Folder number, full path, or Enter to skip folder checks'
+    if (-not $answer) { return '' }
+    $number = 0
+    if ([int]::TryParse($answer, [ref]$number) -and $number -ge 1 -and $number -le $available.Count) {
+        return $available[$number - 1]
+    }
+    $path = Instance-At $answer
+    if (-not $path) { throw 'That folder was not recognized as a Minecraft instance.' }
+    return $path
 }
 
 function Inspect-Jar([string]$Path) {
@@ -648,41 +676,44 @@ function Main {
     try { $Host.UI.RawUI.WindowTitle = 'Mewo Client Fucker | Scanner' } catch {}
     Banner
     Section 'Consent'
-    Say '  Inspects your selected Minecraft instance, mod JAR names and hashes,' 'White'
-    Say '  matching JVM settings, and optionally loaded native DLLs and timestamps.' 'White'
-    Say '  Standard/Deep also inspect a short list of macro-software process names.' 'White'
-    Say '  Deep can inspect bounded live JVM memory only after a second consent.' 'White'
-    Say '  No credentials, screenshots, keystrokes, or unrelated private files are collected.' 'White'
-    Say '  JSON findings remain locally stored. Nothing is uploaded.' 'White'
-    if ((Read-Host '  Agree to the scan described above? [y/N]') -notmatch '^(?i:y|yes)$') {
+    Say '  Mewo checks the selected Minecraft process and, when linked,' 'White'
+    Say '  its mods, JVM options, DLLs and recent local file timestamps.' 'White'
+    Say '  Deep mode asks separately before sampling JVM memory.' 'White'
+    Say '  Nothing is uploaded. No keystrokes or screenshots are collected.' 'White'
+    if ((Read-Host '  Allow this scan? [y/N]') -notmatch '^(?i:y|yes)$') {
         Say '  Scan cancelled.' 'Yellow'
         return
     }
-    Section 'Minecraft instance discovery'
+    Section 'Running Minecraft'
     $running = @(Running-Games)
-    Say ('  {0} likely Minecraft Java process(es) found.' -f $running.Count) 'Cyan'
-    $root = Choose-Instance $running
-    if (-not $root) { throw 'No Minecraft installation selected.' }
-    Say ('  Instance: ' + (Private-Path $root)) 'White'
-    $selected = @($running | Where-Object { $_.instance -and $_.instance -ieq $root })
-    if ($selected.Count -eq 0 -and $running.Count -eq 1 -and -not $running[0].instance) {
-        if ((Read-Host '  Game path unknown. Inspect the sole detected Minecraft Java process? [y/N]') -match '^(?i:y|yes)$') {
-            $selected = @($running[0])
+    $game = Choose-Game $running
+    if (-not $game -and -not $InstancePath) {
+        if ((Read-Host '  No live JVM found. Continue folder-only? [y/N]') -notmatch '^(?i:y|yes)$') {
+            Say '  Scan cancelled.' 'Yellow'
+            return
         }
     }
-    $total = if ($Mode -eq 'Quick') { 5 } elseif ($Mode -eq 'Deep') { 9 } else { 8 }
-    Stage 1 $total 'JVM launch checks'
+    $selected = @()
+    if ($game) {
+        $selected = @($game)
+        Say ('  Checking PID {0}  {1}  {2}' -f $game.pid, $game.name, $game.startedUtc) 'Magenta'
+    }
+    $root = Choose-Instance $game
+    if ($root) { Say ('  Folder: ' + (Private-Path $root)) 'White' }
+    else { Say '  No instance folder linked. Live process checks will still run.' 'Yellow' }
+    $total = if ($Mode -eq 'Quick') { 4 } elseif ($Mode -eq 'Deep') { 8 } else { 7 }
+    Stage 1 $total 'JVM'
     Scan-Jvm $selected
-    Stage 2 $total 'Mod signatures and hashes'
+    Stage 2 $total 'Mod JARs'
     Scan-Mods $root
-    Stage 3 $total 'File artifacts'
+    Stage 3 $total 'Mod folder artifacts'
     Scan-GameArtifacts $root
     if ($Mode -in @('Standard','Deep')) {
-        Stage 4 $total 'Loaded DLLs'
+        Stage 4 $total 'DLLs'
         Scan-Modules $selected
         Stage 5 $total 'File timeline'
         Scan-Timeline $root
-        Stage 6 $total 'Macro software'
+        Stage 6 $total 'Macro process names'
         Scan-Macros
     } else {
         Covered 'dlls' 'Skipped' 'Quick mode'
@@ -690,17 +721,18 @@ function Main {
         Covered 'macro-software' 'Skipped' 'Quick mode'
     }
     if ($Mode -eq 'Deep') {
-        Stage 7 $total 'Optional live-memory check'
+        Stage 7 $total 'Optional JVM memory'
         Scan-Memory $selected
     } else {
         Covered 'memory' 'Skipped' 'Deep mode only'
     }
-    Stage ($total - 1) $total 'Evidence correlation'
+    Stage ($total - 1) $total 'Evidence check'
     $correlations = @(Correlate-Evidence)
-    Stage $total $total 'Saving local report'
+    Stage $total $total 'Save report'
     Write-Report $root $correlations
+    Show-Findings $game $root
     Say ''
-    Say '  Scan finished. Review the findings before making a decision.' 'Magenta'
+    Say '  Mewo finished.' 'Magenta'
 }
 
 try { Main } catch {
