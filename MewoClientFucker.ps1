@@ -904,6 +904,28 @@ function Run-SelfTest {
     $script:Coverage.Clear()
     $empty = Get-ScanVerdict
     if ($empty.status -ne 'SCAN INCOMPLETE') { throw 'Incomplete verdict did not work.' }
+    $fixturePath = Join-Path ([IO.Path]::GetTempPath()) ('mewo-fixture-' + [guid]::NewGuid().ToString('N') + '.jar')
+    try {
+        $archive = [IO.Compression.ZipFile]::Open($fixturePath, [IO.Compression.ZipArchiveMode]::Create)
+        try {
+            $classEntry = $archive.CreateEntry('meteordevelopment/meteorclient/Test.class')
+            $classStream = $classEntry.Open()
+            $classStream.Dispose()
+            $otherEntry = $archive.CreateEntry('org/example/OrdinaryMod.class')
+            $otherStream = $otherEntry.Open()
+            $otherStream.Dispose()
+            $metaEntry = $archive.CreateEntry('fabric.mod.json')
+            $writer = [IO.StreamWriter]::new($metaEntry.Open(), [Text.Encoding]::UTF8)
+            try { $writer.Write('{"id":"meteor-client","name":"Fixture","version":"1.0.0"}') } finally { $writer.Dispose() }
+        } finally { $archive.Dispose() }
+        $jar = Inspect-Jar $fixturePath
+        if ($jar.error) { throw ('JAR parser error: ' + $jar.error) }
+        if ($jar.loader -ne 'Fabric' -or $jar.id -ne 'meteor-client') { throw 'Fabric JAR metadata was not parsed.' }
+        if (@($jar.matches) -notcontains 'meteor') { throw 'Known client package inside JAR was not identified.' }
+        if ($jar.classes -ne 2) { throw 'JAR class counting failed.' }
+    } finally {
+        Remove-Item -LiteralPath $fixturePath -Force -ErrorAction SilentlyContinue
+    }
     try { Add-Type -TypeDefinition $memorySource -ErrorAction Stop } catch { throw ('Memory helper could not compile: ' + $_.Exception.Message) }
     $script:Findings.Clear()
     $script:Coverage.Clear()
