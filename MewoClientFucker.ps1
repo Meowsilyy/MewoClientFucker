@@ -230,7 +230,7 @@ function Scan-Mods([string]$Root) {
         }
         $idText = $file.BaseName + ' ' + $info.id + ' ' + $info.name
         foreach ($rule in $script:Rules) {
-            if ($idText -match $rule.name -and $id -notcontains $rule.id) {
+            if ($idText -match $rule.name -and @($info.matches) -notcontains $rule.id) {
                 Finding 'Review' 'Mods' 'Known client name' ($file.Name + ': ' + $rule.label) $rule.id $file.Name
             }
         }
