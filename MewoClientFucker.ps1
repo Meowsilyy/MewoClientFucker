@@ -365,20 +365,457 @@ function Scan-GameArtifacts([string]$Root) {
         Covered 'mod-artifacts' 'Skipped' 'No instance folder linked.'
         return
     }
-    $folder = Join-Path $Root 'mods'
-    if (-not (Test-Path -LiteralPath $folder -PathType Container)) {
-        Covered 'mod-artifacts' 'Unavailable' 'No mods directory found.'
+    $total = 0
+    foreach ($relative in @('mods','config')) {
+        $folder = Join-Path $Root $relative
+        if (-not (Test-Path -LiteralPath $folder -PathType Container)) { continue }
+        foreach ($entry in @(Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue | Select-Object -First 350)) {
+            if ($relative -eq 'mods' -and -not $entry.PSIsContainer -and $entry.Name -match '(?i)\.(jar\.(disabled|old|bak)|dll|exe)
+
+function Scan-Jvm([object[]]$Processes) {
+    Section 'JVM and process launch'
+    if ($Processes.Count -eq 0) {
+        Covered 'jvm' 'Unavailable' 'No running instance process associated with the selected folder.'
+        Finding 'Info' 'Runtime' 'No matching process' 'Close/reopen the game or select the active instance to enable runtime checks.'
         return
     }
-    $total = 0
-    foreach ($file in @(Get-ChildItem -LiteralPath $folder -File -ErrorAction SilentlyContinue | Select-Object -First 500)) {
-        if ($file.Name -match '(?i)\.(jar\.(disabled|old|bak)|dll|exe)$') {
-            $total++
-            Finding 'Info' 'Artifacts' 'Unusual or inactive mod-folder file' ($file.Name + '; no conclusions about use.') '' $file.Name
+    foreach ($p in $Processes) {
+        $script:Runtime.Add([pscustomobject]@{ pid = $p.pid; name = $p.name; startedUtc = $p.startedUtc; executable = $p.executable })
+        Say ('  PID {0}: {1}' -f $p.pid, $p.name) 'White'
+        foreach ($check in @(
+            @{ name = 'Java agent'; expression = '(?i)(?:^|\s)-javaagent(?:\s|:)' },
+            @{ name = 'Native Java agent'; expression = '(?i)(?:^|\s)-agent(path|lib):' },
+            @{ name = 'Bootstrap classpath override'; expression = '(?i)-Xbootclasspath' },
+            @{ name = 'Additional Fabric mods'; expression = '(?i)-Dfabric\.(addMods|loadMods|classPathGroups)=' },
+            @{ name = 'Mixin override'; expression = '(?i)-D(mixin\.configs|fabric\.mixin\.configs)=' }
+        )) {
+            if ($p.command -match $check.expression) {
+                Finding 'Review' 'Runtime' $check.name ('PID ' + $p.pid + '; this can be legitimate.') '' ('PID ' + $p.pid)
+            }
         }
     }
-    Say ('  Nonstandard file names: ' + $total) 'DarkGray'
-    Covered 'mod-artifacts' 'Completed' 'Lists selected nonstandard filenames at mods root. Does not open these files.'
+    Covered 'jvm' 'Completed' 'Checked command-line option presence without retaining sensitive launch arguments.'
+}
+
+function Scan-Modules([object[]]$Processes) {
+    Section 'Loaded native modules'
+    if ($Processes.Count -eq 0) {
+        Covered 'dlls' 'Unavailable' 'No matching running Minecraft process.'
+        return
+    }
+    $attempted = 0
+    foreach ($p in $Processes) {
+        $loaded = @()
+        try { $loaded = @((Get-Process -Id $p.pid -ErrorAction Stop).Modules) } catch {
+            Finding 'Info' 'Modules' 'Module enumeration blocked' ('PID ' + $p.pid + ': Windows access or architecture limitation.')
+            continue
+        }
+        $attempted++
+        Say ('  PID {0}: {1} loaded modules.' -f $p.pid, $loaded.Count) 'Cyan'
+        foreach ($module in @($loaded | Select-Object -First 500)) {
+            $location = [string]$module.FileName
+            if (-not $location) { continue }
+            $record = [ordered]@{ pid = $p.pid; module = [string]$module.ModuleName; path = Private-Path $location; sha256 = ''; signature = 'NotChecked' }
+            $systemPath = $env:WINDIR -and $location.StartsWith($env:WINDIR, [StringComparison]::OrdinalIgnoreCase)
+            $programPath = $env:ProgramFiles -and $location.StartsWith($env:ProgramFiles, [StringComparison]::OrdinalIgnoreCase)
+            if (-not $systemPath -and -not $programPath) {
+                try { $record.signature = [string](Get-AuthenticodeSignature -LiteralPath $location).Status } catch { $record.signature = 'Unavailable' }
+                try { $record.sha256 = (Get-FileHash -LiteralPath $location -Algorithm SHA256).Hash } catch {}
+                if ($record.signature -notin @('Valid','Unavailable')) {
+                    if ($location -match '(?i)\\AppData\\Local\\Temp\\') {
+                        Finding 'Review' 'Modules' 'Unsigned module loaded from Temp' ($module.ModuleName + ' in PID ' + $p.pid + '; investigate its origin.') '' ('PID ' + $p.pid)
+                    }
+                }
+            }
+            $script:Modules.Add([pscustomobject]$record)
+        }
+    }
+    Covered 'dlls' $(if ($attempted -gt 0) { 'Completed' } else { 'Unavailable' }) 'Lists loaded modules and checks non-system module signatures when accessible; no inline-hook integrity verification.'
+}
+
+function Scan-Timeline([string]$Root) {
+    Section 'Minecraft file timeline'
+    if (-not $Root) {
+        Covered 'file-timeline' 'Skipped' 'No instance folder linked.'
+        return
+    }
+    $recent = [datetime]::UtcNow.AddDays(-14)
+    foreach ($relative in @('mods','config')) {
+        $folder = Join-Path $Root $relative
+        if (-not (Test-Path -LiteralPath $folder -PathType Container)) { continue }
+        $files = @(Get-ChildItem -LiteralPath $folder -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 150)
+        foreach ($f in $files) {
+            if ($f.LastWriteTimeUtc -lt $recent) { continue }
+            $script:Timeline.Add([pscustomobject]@{
+                location = $relative
+                file = $f.Name
+                updatedUtc = $f.LastWriteTimeUtc.ToString('o')
+                size = $f.Length
+            })
+        }
+    }
+    Say ('  {0} relevant recent file timestamps.' -f $script:Timeline.Count) 'Cyan'
+    Covered 'file-timeline' 'Completed' '14-day mod/config timestamp listing only; timestamps can be modified and are not proof of execution.'
+}
+
+function Scan-Macros {
+    Section 'Optional macro software context'
+    $names = @('AutoHotkey','AutoHotkey64','AutoHotkey32','AutoIt3','PuloversMacroCreator')
+    $found = @(Get-Process -Name $names -ErrorAction SilentlyContinue)
+    foreach ($p in $found) {
+        Finding 'Info' 'Macro' 'Macro-capable software running' ($p.ProcessName + ' (PID ' + $p.Id + '). May be unrelated to Minecraft.')
+    }
+    Covered 'macro-software' 'Completed' 'Only checks a small list of currently running process names; no keystroke capture, macros or settings are read.'
+}
+
+$memorySource = @'
+using System;
+using System.Text;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+
+public static class MewoMemory
+{
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Region
+    {
+        public ulong BaseAddress;
+        public ulong AllocationBase;
+        public uint AllocationProtect;
+        public uint Alignment1;
+        public ulong RegionSize;
+        public uint State;
+        public uint Protect;
+        public uint Type;
+        public uint Alignment2;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr OpenProcess(uint rights, bool inherit, int pid);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern UIntPtr VirtualQueryEx(IntPtr handle, IntPtr address, out Region region, UIntPtr length);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool ReadProcessMemory(IntPtr handle, IntPtr address, byte[] destination, UIntPtr size, out UIntPtr read);
+
+    public static string[] Check(int pid, string[] patterns, int limitMiB)
+    {
+        var results = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (IntPtr.Size != 8) throw new Exception("Use 64-bit Windows PowerShell for this check.");
+        var handle = OpenProcess(0x0410, false, pid);
+        if (handle == IntPtr.Zero) throw new Exception("Cannot read selected Minecraft process.");
+        try
+        {
+            ulong address = 0x10000;
+            ulong maximum = 0x00007FFFFFF00000UL;
+            long scanned = 0;
+            long cap = limitMiB * 1024L * 1024L;
+            var block = new byte[131072];
+            var structureSize = new UIntPtr((uint)Marshal.SizeOf(typeof(Region)));
+            var latin = Encoding.GetEncoding(28591);
+            while (address < maximum && scanned < cap)
+            {
+                Region region;
+                var readRegion = VirtualQueryEx(handle, new IntPtr(unchecked((long)address)), out region, structureSize);
+                if (readRegion == UIntPtr.Zero || region.RegionSize == 0) break;
+                ulong next = region.BaseAddress + region.RegionSize;
+                if (next <= address) break;
+                bool readable = region.State == 0x1000 && (region.Protect & 0x100) == 0 && (region.Protect & 0x01) == 0 && (region.Protect & 0x02) == 0;
+                if (readable)
+                {
+                    ulong offset = 0;
+                    ulong sample = Math.Min(region.RegionSize, 4UL * 1024UL * 1024UL);
+                    while (offset < sample && scanned < cap)
+                    {
+                        int requested = (int)Math.Min((ulong)block.Length, sample - offset);
+                        requested = (int)Math.Min(requested, cap - scanned);
+                        if (requested < 1) break;
+                        UIntPtr length;
+                        bool okay = ReadProcessMemory(handle, new IntPtr(unchecked((long)(region.BaseAddress + offset))), block, new UIntPtr((uint)requested), out length);
+                        int size = (int)length.ToUInt64();
+                        if (okay && size > 0)
+                        {
+                            scanned += size;
+                            string ascii = latin.GetString(block, 0, size);
+                            string unicode = Encoding.Unicode.GetString(block, 0, size - size % 2);
+                            foreach (var pattern in patterns)
+                            {
+                                if (ascii.IndexOf(pattern, StringComparison.OrdinalIgnoreCase) >= 0 || unicode.IndexOf(pattern, StringComparison.OrdinalIgnoreCase) >= 0)
+                                    results.Add(pattern);
+                            }
+                        }
+                        offset += (ulong)requested;
+                    }
+                }
+                address = next;
+            }
+            return new List<string>(results).ToArray();
+        }
+        finally { CloseHandle(handle); }
+    }
+}
+'@
+
+function Scan-Memory([object[]]$Processes) {
+    Section 'Consented JVM memory signatures'
+    if ($Processes.Count -eq 0) {
+        Covered 'memory' 'Unavailable' 'No associated running Minecraft process.'
+        return
+    }
+    Say '  Deep mode reads up to 64 MiB per selected Java process for known strings.' 'Yellow'
+    Say '  It does not keep raw memory, but private data may be encountered during inspection.' 'Yellow'
+    if ((Read-Host '  Allow this additional memory inspection? [y/N]') -notmatch '^(?i:y|yes)$') {
+        Covered 'memory' 'Skipped' 'Player declined optional process memory check.'
+        return
+    }
+    try { Add-Type -TypeDefinition $memorySource -ErrorAction Stop } catch {
+        Covered 'memory' 'Unavailable' ('Cannot initialize native API bindings: ' + $_.Exception.Message)
+        return
+    }
+    $needles = @('meteordevelopment/meteorclient','meteordevelopment.meteorclient','net/wurstclient','net.wurstclient','net/ccbluex/liquidbounce','net.ccbluex.liquidbounce','org/bleachhack','org.bleachhack','thunder/hack','rusherhack','dev/fiki/forgehax','dev.fiki.forgehax','xyz/mathax/mathaxclient','xyz.mathax.mathaxclient')
+    $checks = 0
+    foreach ($p in $Processes) {
+        try {
+            $hits = @([MewoMemory]::Check([int]$p.pid, [string[]]$needles, 64))
+            $checks++
+            foreach ($hit in $hits) {
+                $id = ''
+                foreach ($rule in $script:Rules) {
+                    if ($hit -match $rule.path -or $hit -match $rule.id) { $id = $rule.id; break }
+                }
+                Finding 'Review' 'Memory' 'Client-related string in JVM memory' ('PID ' + $p.pid + ': ' + $hit + '; strings alone are inconclusive.') $id ('PID ' + $p.pid)
+            }
+            if ($hits.Count -eq 0) { Say ('  PID {0}: no configured signatures in sampled pages.' -f $p.pid) 'Gray' }
+        } catch {
+            Finding 'Info' 'Memory' 'Inspection unavailable' ('PID ' + $p.pid + ': ' + $_.Exception.Message)
+        }
+    }
+    Covered 'memory' $(if ($checks -gt 0) { 'Completed' } else { 'Unavailable' }) 'Bounded 64 MiB per process, page sampling; no guarantee of complete memory coverage.'
+}
+
+function Correlate-Evidence {
+    Section 'Evidence correlation'
+    $groups = @($script:Findings.ToArray() | Where-Object { $_.ruleId })
+    $correlated = [System.Collections.Generic.List[object]]::new()
+    foreach ($id in @($groups | Select-Object -ExpandProperty ruleId -Unique)) {
+        $items = @($groups | Where-Object { $_.ruleId -eq $id })
+        $sources = @($items | Select-Object -ExpandProperty category -Unique)
+        $conclusion = if ($sources.Count -ge 2) { 'Multiple independent categories require manual review' } else { 'Single-category evidence; insufficient to corroborate' }
+        $correlated.Add([pscustomobject]@{
+            ruleId = $id
+            evidenceCategories = $sources
+            findingCount = $items.Count
+            interpretation = $conclusion
+        })
+        Say ('  {0}: {1} source category/categories - {2}' -f $id, $sources.Count, $conclusion) $(if ($sources.Count -ge 2) { 'Yellow' } else { 'Gray' })
+    }
+    if ($correlated.Count -eq 0) { Say '  No configured client identifiers detected in completed checks.' 'Green' }
+    return @($correlated.ToArray())
+}
+
+function Write-Report([string]$Root, [object[]]$Correlations) {
+    Section 'Local evidence report'
+    $target = $OutputDirectory
+    if (-not $target) {
+        $documents = [Environment]::GetFolderPath('MyDocuments')
+        if (-not $documents) { $documents = $env:TEMP }
+        $target = Join-Path $documents 'Mewo-Reports'
+    }
+    New-Item -ItemType Directory -Path $target -Force | Out-Null
+    $file = Join-Path $target ('Mewo-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + $script:SessionId.Substring(0,8) + '.json')
+    $indicatorCount = @($script:Findings | Where-Object { $_.level -eq 'Indicator' }).Count
+    $reviewCount = @($script:Findings | Where-Object { $_.level -eq 'Review' }).Count
+    $report = [ordered]@{
+        product = 'Mewo Client Fucker'
+        version = $script:Version
+        sessionId = $script:SessionId
+        mode = $Mode
+        startedUtc = $script:Started.ToString('o')
+        finishedUtc = [datetime]::UtcNow.ToString('o')
+        minecraftInstance = Private-Path $Root
+        outcome = if ($indicatorCount -gt 0) { 'Known client indicators require manual review' } elseif ($reviewCount -gt 0) { 'Unconfirmed findings require review' } else { 'No configured indicators found in completed checks' }
+        counts = @{ indicators = $indicatorCount; review = $reviewCount; mods = $script:Mods.Count; dlls = $script:Modules.Count }
+        coverage = @($script:Coverage.ToArray())
+        processes = @($script:Runtime.ToArray())
+        mods = @($script:Mods.ToArray())
+        modules = @($script:Modules.ToArray())
+        timeline = @($script:Timeline.ToArray())
+        findings = @($script:Findings.ToArray())
+        correlations = @($Correlations)
+        checksNotIncluded = @(
+            'Not a verdict of innocence or cheating.'
+            'A clean result cannot establish that a machine has no cheats.'
+            'Windows timestamps can be altered or missing.'
+            'DLL signatures, macro software, JVM agents, and obfuscation alone do not establish wrongdoing.'
+            'This version does not implement inline-hook byte verification, persistent monitoring, deleted-file recovery, or a Paper server-side bridge.'
+            'The report SHA-256 checksum detects accidental or subsequent changes only if independently retained; it does not authenticate scanner execution.'
+        )
+        privacy = 'Stored locally; not uploaded by this scanner.'
+    }
+    $report | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $file -Encoding UTF8
+    $digest = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
+    Set-Content -LiteralPath ($file + '.sha256') -Value $digest -Encoding Ascii
+    $summary = [System.Collections.Generic.List[string]]::new()
+    $summary.Add('MEWO CLIENT FUCKER | v' + $script:Version)
+    $summary.Add('Session: ' + $script:SessionId)
+    $summary.Add('Instance: ' + (Private-Path $Root))
+    $summary.Add('Mode: ' + $Mode)
+    $summary.Add('Result: ' + $report.outcome)
+    $summary.Add(('Indicators: {0} | Needs review: {1} | JARs: {2} | DLLs: {3}' -f $indicatorCount, $reviewCount, $script:Mods.Count, $script:Modules.Count))
+    $summary.Add('')
+    $summary.Add('FINDINGS')
+    foreach ($finding in $script:Findings) {
+        $summary.Add(('[{0}] {1}: {2}' -f $finding.level, $finding.title, $finding.detail))
+    }
+    $summary.Add('')
+    $summary.Add('CHECK COVERAGE')
+    foreach ($check in $script:Coverage) {
+        $summary.Add(('[{0}] {1}: {2}' -f $check.status, $check.check, $check.explanation))
+    }
+    $summary.Add('')
+    $summary.Add('This is not an automatic cheating verdict. No report was uploaded.')
+    $summaryPath = [IO.Path]::ChangeExtension($file, '.txt')
+    $summary.ToArray() | Set-Content -LiteralPath $summaryPath -Encoding UTF8
+    Say ('  ' + $report.outcome) 'Magenta'
+    Say ('  Indicators: {0} | Review: {1} | JARs: {2} | DLLs: {3}' -f $indicatorCount, $reviewCount, $script:Mods.Count, $script:Modules.Count) 'White'
+    Say ('  JSON: ' + $file) 'Magenta'
+    Say ('  Text: ' + $summaryPath) 'Magenta'
+    Say ('  SHA-256: ' + $digest) 'DarkGray'
+    Say '  Review the JSON report before sharing. No report was transmitted.' 'Gray'
+}
+
+function Show-Findings([object]$Game, [string]$Root) {
+    Section 'Results'
+    if ($Game) { Say ('  Process: PID ' + $Game.pid) 'Magenta' }
+    else { Say '  No live JVM was checked.' 'Yellow' }
+    if ($Root) { Say ('  Instance: ' + (Private-Path $Root)) 'White' }
+    else { Say '  No instance folder was checked.' 'Yellow' }
+    $hits = @($script:Findings.ToArray() | Where-Object { $_.level -eq 'Indicator' })
+    $reviews = @($script:Findings.ToArray() | Where-Object { $_.level -eq 'Review' })
+    $info = @($script:Findings.ToArray() | Where-Object { $_.level -eq 'Info' })
+    Say ('  Client indicators: {0}    Review: {1}    Notes: {2}' -f $hits.Count, $reviews.Count, $info.Count) 'Magenta'
+    if ($hits.Count -eq 0 -and $reviews.Count -eq 0) {
+        Say '  No confirmed client indicators in completed checks.' 'Green'
+    }
+    foreach ($group in @(
+        @{ title = 'CLIENT INDICATORS'; records = $hits; color = 'Yellow' },
+        @{ title = 'NEEDS REVIEW'; records = $reviews; color = 'DarkYellow' },
+        @{ title = 'OTHER NOTES'; records = $info; color = 'Gray' }
+    )) {
+        if ($group.records.Count -eq 0) { continue }
+        Section $group.title
+        foreach ($finding in $group.records) {
+            Say ('  ' + $finding.title) $group.color
+            Say ('    ' + $finding.detail) 'Gray'
+        }
+    }
+    Section 'Check status'
+    foreach ($check in $script:Coverage) {
+        $color = if ($check.status -eq 'Completed') { 'Green' } elseif ($check.status -eq 'Skipped') { 'Yellow' } else { 'DarkYellow' }
+        Say ('  [{0}] {1}: {2}' -f $check.status, $check.check, $check.explanation) $color
+    }
+    Say '  Findings need human review. Nothing was uploaded.' 'DarkGray'
+}
+
+function Main {
+    if ($env:OS -ne 'Windows_NT') { throw 'Mewo requires Windows.' }
+    try { $Host.UI.RawUI.WindowTitle = 'Mewo Client Fucker | Scanner' } catch {}
+    if (-not $script:ModeWasProvided) {
+        Say '  MEWO | PICK A SCAN MODE' 'Magenta'
+        Say '  [1] Quick     JVM + mods' 'White'
+        Say '  [2] Standard  DLLs + local timeline' 'White'
+        Say '  [3] Deep      Optional JVM memory signatures' 'White'
+        $choice = Read-Host '  Mode [2]'
+        $Mode = switch ($choice) {
+            '1' { 'Quick' }
+            '3' { 'Deep' }
+            default { 'Standard' }
+        }
+    }
+    Banner
+    Section 'Consent'
+    Say '  Mewo checks the selected Minecraft process and, when linked,' 'White'
+    Say '  its mods, JVM options, DLLs and recent local file timestamps.' 'White'
+    Say '  Deep mode asks separately before sampling JVM memory.' 'White'
+    Say '  Nothing is uploaded. No keystrokes or screenshots are collected.' 'White'
+    if ((Read-Host '  Allow this scan? [y/N]') -notmatch '^(?i:y|yes)$') {
+        Say '  Scan cancelled.' 'Yellow'
+        return
+    }
+    Section 'Running Minecraft'
+    $running = @(Running-Games)
+    $game = Choose-Game $running
+    if (-not $game -and -not $InstancePath) {
+        if ((Read-Host '  No live JVM found. Continue folder-only? [y/N]') -notmatch '^(?i:y|yes)$') {
+            Say '  Scan cancelled.' 'Yellow'
+            return
+        }
+    }
+    $selected = @()
+    if ($game) {
+        $selected = @($game)
+        Say ('  Checking PID {0}  {1}  {2}' -f $game.pid, $game.name, $game.startedUtc) 'Magenta'
+    }
+    $root = Choose-Instance $game
+    if ($root) { Say ('  Folder: ' + (Private-Path $root)) 'White' }
+    else { Say '  No instance folder linked. Live process checks will still run.' 'Yellow' }
+    $total = if ($Mode -eq 'Quick') { 5 } elseif ($Mode -eq 'Deep') { 9 } else { 8 }
+    Stage 1 $total 'JVM'
+    Scan-Jvm $selected
+    Stage 2 $total 'Mod JARs'
+    Scan-Mods $root
+    Stage 3 $total 'Mod folder artifacts'
+    Scan-GameArtifacts $root
+    if ($Mode -in @('Standard','Deep')) {
+        Stage 4 $total 'DLLs'
+        Scan-Modules $selected
+        Stage 5 $total 'File timeline'
+        Scan-Timeline $root
+        Stage 6 $total 'Macro process names'
+        Scan-Macros
+    } else {
+        Covered 'dlls' 'Skipped' 'Quick mode'
+        Covered 'file-timeline' 'Skipped' 'Quick mode'
+        Covered 'macro-software' 'Skipped' 'Quick mode'
+    }
+    if ($Mode -eq 'Deep') {
+        Stage 7 $total 'Optional JVM memory'
+        Scan-Memory $selected
+    } else {
+        Covered 'memory' 'Skipped' 'Deep mode only'
+    }
+    Stage ($total - 1) $total 'Evidence check'
+    $correlations = @(Correlate-Evidence)
+    Stage $total $total 'Save report'
+    Write-Report $root $correlations
+    Show-Findings $game $root
+    Say ''
+    Say '  Mewo finished.' 'Magenta'
+}
+
+try { Main } catch {
+    Say ('  [ERROR] ' + $_.Exception.Message) 'Red'
+    exit 1
+}
+) {
+                $total++
+                Finding 'Info' 'Artifacts' 'Inactive or unusual mod file' ($entry.Name + '; no indication it was used.') '' $entry.Name
+            }
+            foreach ($rule in $script:Rules) {
+                if ($entry.Name -match $rule.name) {
+                    $total++
+                    Finding 'Review' 'Artifacts' 'Client-named file or config' ($relative + '/' + $entry.Name + ' resembles ' + $rule.label + '; could be left over from an older install.') $rule.id $entry.Name
+                    break
+                }
+            }
+        }
+    }
+    Say ('  ' + $total + ' relevant file or config names recorded.') 'Magenta'
+    Covered 'mod-artifacts' 'Completed' 'Examines names in the selected Minecraft mods/config folders, including possible leftover client config names. Does not read config contents.'
 }
 
 function Scan-Jvm([object[]]$Processes) {
