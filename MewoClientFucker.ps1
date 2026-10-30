@@ -810,9 +810,9 @@ function Run-Tests {
         $archive=[IO.Compression.ZipFile]::Open($fixture,[IO.Compression.ZipArchiveMode]::Create)
         try {
             $class=$archive.CreateEntry('meteordevelopment/meteorclient/Fixture.class')
+            $class.Open().Dispose()
             $writer=[IO.StreamWriter]::new($archive.CreateEntry('fabric.mod.json').Open(),[Text.Encoding]::UTF8)
             try { $writer.Write('{"id":"fixture","name":"Test Mod","version":"1.0"}') } finally { $writer.Dispose() }
-            $class.Open().Dispose()
         } finally { $archive.Dispose() }
         $parsed=Inspect-Jar $fixture
         if ($parsed.loader -ne 'Fabric' -or $parsed.modId -ne 'fixture') { throw 'Fabric metadata test failed.' }
