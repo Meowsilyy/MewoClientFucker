@@ -259,14 +259,14 @@ function Choose-Target {
 function Get-ArchiveInfo([IO.Compression.ZipArchive]$Archive,[string]$Label) {
     $result = [ordered]@{ loader='Unknown'; modId=''; name=''; version=''; classes=0; packages=@(); modules=@(); embedded=0; error='' }
     if ($Archive.Entries.Count -gt 45000) { $result.error = 'Archive has too many entries.'; return [pscustomobject]$result }
-    $matches = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $clientHits = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $modules = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($item in $Archive.Entries) {
         $entryPath = $item.FullName.Replace('\','/')
         if ($entryPath.EndsWith('.class',[StringComparison]::OrdinalIgnoreCase)) {
             $result.classes++
             foreach ($rule in $script:Rules) {
-                if ($entryPath -match $rule.package) { [void]$matches.Add($rule.id) }
+                if ($entryPath -match $rule.package) { [void]$clientHits.Add($rule.id) }
             }
             $stem = [IO.Path]::GetFileNameWithoutExtension($entryPath)
             $normalized = ($stem -replace '[^a-zA-Z0-9]','').ToLowerInvariant()
@@ -301,7 +301,7 @@ function Get-ArchiveInfo([IO.Compression.ZipArchive]$Archive,[string]$Label) {
             }
         }
     }
-    $result.packages = @($matches)
+    $result.packages = @($clientHits)
     $result.modules = @($modules)
     return [pscustomobject]$result
 }
