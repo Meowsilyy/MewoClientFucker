@@ -467,9 +467,11 @@ function Check-Mods {
         $done++
         $hash=''
         try { $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash } catch {}
+        $hash512=''
+        try { $hash512 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA512).Hash.ToLowerInvariant() } catch {}
         $details = Inspect-Jar $file.FullName
         $mod = [pscustomobject]@{
-            file=$file.Name; sha256=$hash; bytes=$file.Length
+            file=$file.Name; sha256=$hash; sha512=$hash512; registry='Not checked'; publishedName=''; bytes=$file.Length
             modifiedUtc=$file.LastWriteTimeUtc.ToString('o'); loader=$details.loader
             id=$details.modId; name=$details.name; version=$details.version
             classes=$details.classes; embeddedJars=$details.embeddedJars
@@ -505,6 +507,50 @@ function Check-Mods {
         Add-Finding 'Info' 'Mods' 'Duplicate mod ID' ($duplicate.Name + ' occurs in multiple JARs.')
     }
     Mark 'mods' 'Completed' ($script:Mods.Count.ToString() + ' JARs checked; nested JARs up to 8 MiB, maximum eight per JAR.')
+}
+
+function Check-Published-Mods {
+    Heading 'Optional published mod verification'
+    if ($script:Mods.Count -eq 0) {
+        Mark 'published-mods' 'Skipped' 'No JAR files to check.'
+        return
+    }
+    Paint '  Checks exact mod SHA-512 hashes against the public Modrinth registry.' 'White'
+    Paint '  Only mod hashes are sent. No local files, Minecraft login or scan report.' 'Gray'
+    Paint '  Private/custom mods may not match. Unmatched does not mean tampered.' 'Yellow'
+    if (-not (Confirm 'Send mod hashes to Modrinth for lookup?')) {
+        Mark 'published-mods' 'Skipped' 'Player declined public registry lookup.'
+        return
+    }
+    $available=@($script:Mods | Where-Object { $_.sha512 })
+    $matched=0
+    $unmatched=0
+    $queries=0
+    try {
+        for ($i=0;$i -lt $available.Count;$i+=50) {
+            $batch=@($available | Select-Object -Skip $i -First 50)
+            $hashes=@($batch | ForEach-Object { $_.sha512.ToLowerInvariant() })
+            $payload=@{ hashes=$hashes; algorithm='sha512' } | ConvertTo-Json -Compress -Depth 5
+            $versions=Invoke-RestMethod -Uri 'https://api.modrinth.com/v2/version_files' -Method Post -ContentType 'application/json' -Headers @{ 'User-Agent'='MewoClientFucker/1.2.0 (github.com/Meowsilyy/MewoClientFucker)' } -Body $payload -ErrorAction Stop
+            $queries++
+            foreach ($mod in $batch) {
+                $property=$versions.PSObject.Properties[$mod.sha512]
+                if ($null -ne $property -and $null -ne $property.Value) {
+                    $mod.registry='Modrinth exact match'
+                    $mod.publishedName=[string]$property.Value.name
+                    $matched++
+                } else {
+                    $mod.registry='No Modrinth match'
+                    $unmatched++
+                }
+            }
+        }
+        Paint ('  Exact published matches: ' + $matched + '  |  Unmatched: ' + $unmatched) 'Magenta'
+        Mark 'published-mods' 'Completed' ('Submitted ' + $available.Count + ' SHA-512 hashes in ' + $queries + ' batches; an unknown hash is not proof of tampering.')
+    } catch {
+        Mark 'published-mods' 'Unavailable' 'Modrinth lookup failed or was rate-limited; verification is incomplete.'
+        Paint '  Could not finish external verification. No tamper verdict was made.' 'Yellow'
+    }
 }
 
 function Check-Jvm {
@@ -896,6 +942,11 @@ function Show-Result {
     Paint ('  ' + $v.meaning) 'White'
     Paint ('  ' + ('═' * 60)) $color
     Paint ('  Client JAR signatures  : ' + $v.clientSignatures) 'White'
+    $publicMatches=@($script:Mods | Where-Object { $_.registry -eq 'Modrinth exact match' }).Count
+    $unmatched=@($script:Mods | Where-Object { $_.registry -eq 'No Modrinth match' }).Count
+    Paint ('  Verified public hashes: ' + $publicMatches) 'Gray'
+    Paint ('  Unverified mod hashes : ' + $unmatched) 'Gray'
+    Paint '  Tampered mods         : NOT DETERMINED' 'DarkYellow'
     Paint ('  Live client/DLL names : ' + $v.injectionIndicators) $(if ($v.injectionIndicators) { 'Yellow' } else { 'Gray' })
     Paint ('  Past-execution traces: ' + $v.executionTraces) 'Gray'
     Paint ('  Cheat module classes  : ' + $v.moduleClasses) $(if ($v.moduleClasses) { 'Yellow' } else { 'Gray' })
@@ -979,6 +1030,7 @@ function Save-Report {
     $lines.Add($verdict.meaning)
     $lines.Add(('Client JARs: {0} | Module classes: {1} | Module strings: {2} | JVM strings: {3} | Review: {4}' -f $verdict.clientSignatures,$verdict.moduleClasses,$verdict.moduleStrings,$verdict.memoryStrings,$verdict.reviewFlags))
     $lines.Add('Native inline hooks: NOT VERIFIED')
+    $lines.Add('Tampered mod status: NOT DETERMINED (only exact published hashes are verified)')
     $lines.Add(('Live client/DLL indicators: {0} | Past traces: {1}' -f $verdict.injectionIndicators,$verdict.executionTraces))
     $lines.Add('Client self-destruct: NOT ESTABLISHED')
     $lines.Add('Target PID: '+$(if ($script:Target) { $script:Target.pid } else { 'Not selected' }))
@@ -1008,7 +1060,7 @@ function Details {
             'M' {
                 Heading 'Mod files'
                 foreach ($item in $script:Mods) {
-                    Paint ('  '+$item.file+'  ['+$item.loader+'] '+$item.id+' '+$item.version) 'White'
+                    Paint ('  '+$item.file+'  ['+$item.loader+'] '+$item.id+' '+$item.version+'  '+$item.registry) 'White'
                     if (@($item.clientPackages).Count) { Paint ('    Client packages: '+(@($item.clientPackages)-join ', ')) 'Red' }
                 }
             }
@@ -1079,6 +1131,7 @@ function Run-Tests {
         $parsed=Inspect-Jar $fixture
         if ($parsed.loader -ne 'Fabric' -or $parsed.modId -ne 'fixture') { throw ('Fabric metadata test failed: ' + ($parsed | ConvertTo-Json -Compress -Depth 3)) }
         if (@($parsed.clientPackages) -notcontains 'meteor') { throw 'Client class match test failed.' }
+        if (-not ((Get-FileHash -LiteralPath $fixture -Algorithm SHA512).Hash)) { throw 'Mod SHA-512 hash calculation failed.' }
         if (@($parsed.genericModules | Where-Object { $_.name -eq 'AimAssist' -and $_.source -eq 'Class' }).Count -ne 1) { throw ('AimAssist class match not detected: ' + ($parsed.genericModules | ConvertTo-Json -Compress)) }
         if (@($parsed.genericModules | Where-Object { $_.name -eq 'AutoCrystal' -and $_.source -eq 'Constant' }).Count -ne 1) { throw ('AutoCrystal constant pool match not detected: ' + ($parsed.genericModules | ConvertTo-Json -Compress)) }
         $testRoot=Join-Path ([IO.Path]::GetTempPath()) ('mewo-instance-'+[guid]::NewGuid().ToString('N'))
@@ -1143,10 +1196,12 @@ function Main {
         Check-Modules
         Check-Process-Traces
         Check-MacroTools
+        Check-Published-Mods
     } else {
         Mark 'dlls' 'Skipped' 'Quick mode.'
         Mark 'process-traces' 'Skipped' 'Quick mode.'
         Mark 'macros' 'Skipped' 'Quick mode.'
+        Mark 'published-mods' 'Skipped' 'Quick mode.'
     }
     if ($Mode -eq 'Deep') {
         Heading 'Phase 5 | Memory signatures'
