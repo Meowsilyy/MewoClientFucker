@@ -2,7 +2,8 @@
     [ValidateSet('Quick','Standard','Deep')][string]$Mode = 'Standard',
     [string]$InstancePath = '',
     [string]$OutputDirectory = '',
-    [int]$ProcessId = 0
+    [int]$ProcessId = 0,
+    [switch]$SelfTest
 )
 
 $ErrorActionPreference = 'Stop'
@@ -859,6 +860,34 @@ function Report-Details {
     } while ($answer -ne '')
 }
 
+function Run-SelfTest {
+    $script:Findings.Clear()
+    $script:Coverage.Clear()
+    Covered 'jvm' 'Completed' 'Test process'
+    Covered 'mod-jars' 'Completed' 'Test JAR'
+    $clean = Get-ScanVerdict
+    if ($clean.status -ne 'NO CHEAT INDICATORS FOUND') { throw ('Clean verdict mismatch: ' + $clean.status) }
+    Finding 'Indicator' 'Mods' 'Known client package identifier' 'Synthetic test client' 'meteor' 'test.jar'
+    $identified = Get-ScanVerdict
+    if ($identified.status -ne 'CLIENT JAR SIGNATURE FOUND' -or $identified.cheatModSignatures -ne 1) { throw 'Client JAR verdict did not work.' }
+    $script:Findings.Clear()
+    Finding 'Review' 'Memory' 'Client-related string in JVM memory' 'Synthetic memory signature' 'meteor' 'PID 1234'
+    $memory = Get-ScanVerdict
+    if ($memory.status -ne 'CLIENT STRINGS DETECTED' -or $memory.clientMemoryStrings -ne 1) { throw 'Memory-string verdict did not work.' }
+    $script:Findings.Clear()
+    Finding 'Review' 'Artifacts' 'Client-named file or config' 'Synthetic config trace' 'meteor' 'test.json'
+    $trace = Get-ScanVerdict
+    if ($trace.status -ne 'POSSIBLE CHEAT INDICATORS' -or $trace.clientFileTraces -ne 1) { throw 'Trace verdict did not work.' }
+    $script:Findings.Clear()
+    $script:Coverage.Clear()
+    $empty = Get-ScanVerdict
+    if ($empty.status -ne 'SCAN INCOMPLETE') { throw 'Incomplete verdict did not work.' }
+    try { Add-Type -TypeDefinition $memorySource -ErrorAction Stop } catch { throw ('Memory helper could not compile: ' + $_.Exception.Message) }
+    $script:Findings.Clear()
+    $script:Coverage.Clear()
+    Say '  MEWO SELF-TEST PASSED' 'Green'
+}
+
 function Main {
     if ($env:OS -ne 'Windows_NT') { throw 'Mewo requires Windows.' }
     try { $Host.UI.RawUI.WindowTitle = 'Mewo Client Fucker | Scanner' } catch {}
@@ -939,7 +968,9 @@ function Main {
     Say '  Mewo finished.' 'Magenta'
 }
 
-try { Main } catch {
+try {
+    if ($SelfTest) { Run-SelfTest } else { Main }
+} catch {
     Say ('  [ERROR] ' + $_.Exception.Message) 'Red'
     exit 1
 }
