@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet('Quick','Standard','Deep')][string]$Mode = 'Standard',
     [string]$InstancePath = '',
     [string]$OutputDirectory = ''
