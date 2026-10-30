@@ -22,7 +22,7 @@ For Deep mode, add `-Mode Deep` after `& $p`. Or just choose your mode from the 
 
 **Mod analyzer.** Checks up to 500 top-level mod JARs, including up to eight small embedded JARs per archive. Reads Fabric, Quilt, Forge and NeoForge metadata, class package paths and SHA-256 hashes. Looks for known client packages, recognizable mod names and generic module-like class names. Class/package matches are shown separately from weak filename matches.
 
-**Live runtime.** Checks JVM launch options and accessible loaded native DLLs. Deep mode can also scan bounded samples of readable JVM memory for client-package and module strings, with separate consent.
+**Live runtime.** Checks JVM launch options and accessible loaded native DLLs. Standard and Deep also note known macro-capable processes without reading keyboard input or scripts. Deep mode can scan bounded samples of readable JVM memory for client-package and module strings, with separate consent.
 
 **Scoped traces.** Checks selected Minecraft mods/config names and recent file timestamps. Deep mode can optionally check three known client website domains in the local Windows DNS cache. A leftover file or DNS record is not proof a client was used.
 
