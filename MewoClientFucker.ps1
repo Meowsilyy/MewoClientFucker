@@ -850,45 +850,54 @@ function Verdict {
     $modules=@($f | Where-Object { $_.kind -eq 'Module' })
     $strings=@($f | Where-Object { $_.kind -eq 'Memory' })
     $moduleStrings=@($f | Where-Object { $_.kind -eq 'String' })
+    $injections=@($f | Where-Object { $_.kind -eq 'Injection' })
+    $traces=@($f | Where-Object { $_.kind -eq 'Trace' })
     $suspicious=@($f | Where-Object { $_.kind -eq 'Review' })
     $notes=@($f | Where-Object { $_.kind -eq 'Info' })
     $checked=@($script:Coverage.ToArray() | Where-Object { $_.status -eq 'Completed' })
     if ($clients.Count -gt 0) {
         $label='CHEAT CLIENT SIGNATURE FOUND'
-        $meaning='Recognized client packages were found inside scanned JARs; that does not establish the client was enabled in combat.'
+        $meaning='Recognized client packages were found inside scanned JARs. This does not establish that cheating happened during a fight.'
+    } elseif ($injections.Count -gt 0) {
+        $label='LIVE CLIENT OR INJECTION INDICATORS'
+        $meaning='Client-named process or DLL evidence exists now. Names alone cannot prove injection or active cheating.'
     } elseif ($modules.Count -gt 0) {
         $label='CHEAT MODULE FLAGS FOUND'
-        $meaning='Classes named after known cheat modules were found in installed JARs. This identifies classes, not proof that a module ran.'
+        $meaning='JAR classes named after known cheat modules were found. Class presence does not establish use.'
     } elseif ($strings.Count -gt 0) {
         $label='CLIENT STRINGS FOUND IN MEMORY'
-        $meaning='Recognized client strings were found in sampled JVM memory. References can also produce matches.'
-    } elseif ($moduleStrings.Count -gt 0 -or $suspicious.Count -gt 0) {
-        $label='SUSPICIOUS STRINGS OR ARTIFACTS'
-        $meaning='Module strings, mod names or other unconfirmed indicators need contextual review.'
+        $meaning='Recognized client strings were found in sampled JVM memory. These can also be references.'
+    } elseif ($traces.Count -gt 0 -or $moduleStrings.Count -gt 0 -or $suspicious.Count -gt 0) {
+        $label='PAST TRACES OR UNCONFIRMED INDICATORS'
+        $meaning='Execution artifacts, class strings, or names need manual review. No self-destruct is proven.'
     } elseif ($checked.Count -eq 0) {
         $label='SCAN INCOMPLETE'
         $meaning='No scan stage completed successfully.'
     } else {
         $label='NO DETECTIONS IN COMPLETED CHECKS'
-        $meaning='Configured signatures did not match; this does not prove the machine is clean.'
+        $meaning='Configured signatures did not match. This does not prove the computer or client is clean.'
     }
     return [pscustomobject]@{
-        status=$label; meaning=$meaning; clientSignatures=$clients.Count
+        status=$label; meaning=$meaning
+        clientSignatures=$clients.Count; injectionIndicators=$injections.Count; executionTraces=$traces.Count
         moduleClasses=$modules.Count; moduleStrings=$moduleStrings.Count
         memoryStrings=$strings.Count; reviewFlags=$suspicious.Count; notes=$notes.Count
-        hooks='NOT VERIFIED'; checksCompleted=$checked.Count; coverageCount=$script:Coverage.Count
+        hooks='NOT VERIFIED'; selfDestruct='NOT ESTABLISHED'
+        checksCompleted=$checked.Count; coverageCount=$script:Coverage.Count
     }
 }
 
 function Show-Result {
     $v=Verdict
     Heading 'MEWO VERDICT'
-    $color=if ($v.clientSignatures -gt 0) { 'Red' } elseif ($v.moduleClasses -gt 0 -or $v.moduleStrings -gt 0 -or $v.memoryStrings -gt 0 -or $v.reviewFlags -gt 0) { 'Yellow' } else { 'Green' }
+    $color=if ($v.clientSignatures -gt 0) { 'Red' } elseif ($v.injectionIndicators -gt 0 -or $v.executionTraces -gt 0 -or $v.moduleClasses -gt 0 -or $v.moduleStrings -gt 0 -or $v.memoryStrings -gt 0 -or $v.reviewFlags -gt 0) { 'Yellow' } else { 'Green' }
     Paint ('  ' + ('═' * 60)) $color
     Paint ('  ' + $v.status) $color
     Paint ('  ' + $v.meaning) 'White'
     Paint ('  ' + ('═' * 60)) $color
     Paint ('  Client JAR signatures  : ' + $v.clientSignatures) 'White'
+    Paint ('  Live client/DLL names : ' + $v.injectionIndicators) $(if ($v.injectionIndicators) { 'Yellow' } else { 'Gray' })
+    Paint ('  Past-execution traces: ' + $v.executionTraces) 'Gray'
     Paint ('  Cheat module classes  : ' + $v.moduleClasses) $(if ($v.moduleClasses) { 'Yellow' } else { 'Gray' })
     Paint ('  Module name strings   : ' + $v.moduleStrings) 'Gray'
     $memoryChecked=@($script:Coverage | Where-Object { $_.check -eq 'memory' -and $_.status -eq 'Completed' }).Count -gt 0
@@ -896,6 +905,7 @@ function Show-Result {
     Paint ('  JVM client strings    : ' + $memoryText) 'White'
     Paint ('  Other review flags    : ' + $v.reviewFlags) 'Gray'
     Paint '  Native inline hooks   : NOT VERIFIED' 'DarkYellow'
+    Paint '  Client self-destruct  : NOT ESTABLISHED' 'DarkYellow'
     Paint ('  Minecraft PID         : ' + $(if ($script:Target) { $script:Target.pid } else { 'NONE' })) 'Gray'
     if ($script:Root) { Paint ('  Game folder           : ' + (Hide-Home $script:Root)) 'Gray' }
     $moduleFindings=@($script:Findings | Where-Object { $_.kind -in @('Module','String') })
@@ -912,6 +922,15 @@ function Show-Result {
                 Paint ('    [' + $source + '] ' + $item.title) $(if ($item.kind -eq 'Module') { 'Yellow' } else { 'DarkYellow' })
                 Paint ('      ' + $item.detail) 'Gray'
             }
+        }
+    }
+    foreach ($kind in @('Injection','Trace')) {
+        $group=@($script:Findings | Where-Object { $_.kind -eq $kind })
+        Heading ($kind + ' evidence (' + $group.Count + ')')
+        if ($group.Count -eq 0) { Paint '  No matching evidence from the checks that ran.' 'Gray' }
+        foreach ($item in $group) {
+            Paint ('  ' + $item.title) $(if ($kind -eq 'Injection') { 'Yellow' } else { 'DarkYellow' })
+            Paint ('    ' + $item.detail) 'Gray'
         }
     }
     foreach ($kind in @('Client','Memory','Review')) {
@@ -948,6 +967,7 @@ function Save-Report {
         verdict=$verdict; process=@($script:Processes.ToArray())
         mods=@($script:Mods.ToArray()); dlls=@($script:DLLs.ToArray())
         timeline=@($script:Timeline.ToArray())
+        executionTraces=@($script:ExecutionTraces.ToArray())
         coverage=@($script:Coverage.ToArray()); findings=@($script:Findings.ToArray())
         note='A positive artifact is not a cheating conviction; a negative result is not proof the system is clean.'
         privacy='Report stored locally; nothing uploaded.'
@@ -959,6 +979,8 @@ function Save-Report {
     $lines.Add($verdict.meaning)
     $lines.Add(('Client JARs: {0} | Module classes: {1} | Module strings: {2} | JVM strings: {3} | Review: {4}' -f $verdict.clientSignatures,$verdict.moduleClasses,$verdict.moduleStrings,$verdict.memoryStrings,$verdict.reviewFlags))
     $lines.Add('Native inline hooks: NOT VERIFIED')
+    $lines.Add(('Live client/DLL indicators: {0} | Past traces: {1}' -f $verdict.injectionIndicators,$verdict.executionTraces))
+    $lines.Add('Client self-destruct: NOT ESTABLISHED')
     $lines.Add('Target PID: '+$(if ($script:Target) { $script:Target.pid } else { 'Not selected' }))
     $lines.Add('Instance: '+(Hide-Home $script:Root))
     $lines.Add('')
@@ -1025,6 +1047,16 @@ function Run-Tests {
     Add-Finding 'String' 'Crystal' 'AutoCrystal' 'fixture.jar -> classes/Normal.class [Constant]' '' 'fixture.jar'
     if ((Verdict).status -ne 'SUSPICIOUS STRINGS OR ARTIFACTS') { throw 'Module string verdict failed.' }
     $script:Findings.Clear()
+    $script:Findings.Clear()
+    Add-Finding 'Injection' 'DLL' 'Prestige Client named DLL loaded' 'Prestige.dll in target JVM' 'prestige' 'Prestige.dll'
+    if ((Verdict).status -ne 'LIVE CLIENT OR INJECTION INDICATORS') { throw 'Live injection verdict failed.' }
+    $script:Findings.Clear()
+    Add-Finding 'Trace' 'Execution' 'Prestige Client Prefetch trace' 'PRESTIGECLIENT.EXE-TEST.PF' 'prestige' 'PRESTIGECLIENT.EXE-TEST.PF'
+    if ((Verdict).status -ne 'PAST TRACES OR UNCONFIRMED INDICATORS') { throw 'Execution trace verdict failed.' }
+    $script:Findings.Clear()
+    $name=Client-Name 'PrestigeClient.exe'
+    if (-not $name -or $name.id -ne 'prestige') { throw 'Prestige name matching failed.' }
+    if (Client-Name 'ordinary-launcher.exe') { throw 'Non-client filename produced a false positive.' }
     $fixture=Join-Path ([IO.Path]::GetTempPath()) ('mewo-'+[guid]::NewGuid().ToString('N')+'.jar')
     try {
         $archive=[IO.Compression.ZipFile]::Open($fixture,[IO.Compression.ZipArchiveMode]::Create)
