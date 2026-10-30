@@ -4,6 +4,20 @@ A Windows Minecraft screenshare scanner. One CMD command, a purple terminal, and
 
 It checks a running Minecraft process first. If it finds the game folder, it also inspects the mods and relevant files. Nothing gets uploaded.
 
+## One-command launcher (Mewo + original Meow)
+
+If you're testing a client that Mewo still misses, use the launcher. It can run both scanners from one CMD command:
+
+```cmd
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $u='https://raw.githubusercontent.com/Meowsilyy/MewoClientFucker/main/MewoLauncher.ps1'; $p=Join-Path $env:TEMP 'MewoLauncher.ps1'; Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $p; & $p"
+```
+
+Choose **1** to run Mewo and then the official Meow Client Fucker, **2** for Mewo only, or **3** for Meow only. Each scanner asks permission. You can also run the launcher with `-Mode Deep` to make Mewo start in Deep mode.
+
+The Meow option downloads **Meow Client Fucker V1.1 directly from [Tonynoh's release](https://github.com/MeowTonynoh/MeowClientFucker/releases/tag/V1.1)**. It checks the file's SHA-256 against the checksum published in GitHub release metadata and refuses to execute a mismatch. It is a closed-source third-party EXE: verification only confirms matching bytes, **not that the software is safe**. Read the original release information before agreeing.
+
+This isn't a secretly renamed copy of Meow. Meow runs as Meow, gets proper credit, and its output stays separate from Mewo's. We haven't been given permission or source code to modify and redistribute Meow's binary as our own.
+
 ## Run
 
 Open **Command Prompt** and paste:
