@@ -820,8 +820,11 @@ function Show-Findings([object]$Game, [string]$Root) {
     Say ('  ' + ('=' * 62)) $color
     Say ('  Cheat mod package matches : ' + $verdict.cheatModSignatures) $(if ($verdict.cheatModSignatures) { 'Red' } else { 'Gray' })
     Say ('  Client-name matches       : ' + $verdict.clientNameMatches) 'Gray'
-    Say ('  JVM client strings        : ' + $verdict.clientMemoryStrings) $(if ($verdict.clientMemoryStrings) { 'Yellow' } else { 'Gray' })
-    Say ('  Generic module strings     : ' + $verdict.genericMemoryStrings) 'Gray'
+    $memoryDone = @($script:Coverage | Where-Object { $_.check -eq 'memory' -and $_.status -eq 'Completed' }).Count -gt 0
+    $stringValue = if ($memoryDone) { [string]$verdict.clientMemoryStrings } else { 'NOT CHECKED' }
+    $genericValue = if ($memoryDone) { [string]$verdict.genericMemoryStrings } else { 'NOT CHECKED' }
+    Say ('  JVM client strings        : ' + $stringValue) $(if ($verdict.clientMemoryStrings) { 'Yellow' } else { 'Gray' })
+    Say ('  Generic module strings     : ' + $genericValue) 'Gray'
     Say ('  Client file traces        : ' + $verdict.clientFileTraces) 'Gray'
     Say ('  JVM agent flags           : ' + $verdict.jvmAgentFlags) 'Gray'
     Say ('  Other review flags        : ' + $verdict.otherReviewFlags) 'Gray'
@@ -1004,9 +1007,9 @@ function Main {
     }
     Stage ($total - 1) $total 'Evidence check'
     $correlations = @(Correlate-Evidence)
-    Stage $total $total 'Save report'
-    Write-Report $root $correlations
+    Stage $total $total 'Result'
     Show-Findings $game $root
+    Write-Report $root $correlations
     Report-Details
     Say ''
     Say '  Mewo finished.' 'Magenta'
